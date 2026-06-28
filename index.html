@@ -178,7 +178,8 @@ function buildTargets(rect) {
     ph[i]   = c.h;
     psat[i] = c.s;
     plig[i] = c.l;
-    prad[i] = 14 + Math.random() * 36; // 14~50px
+    const scale = Math.min(W, H) / 1080;
+    prad[i] = (14 + Math.random() * 36) * scale;
     pta[i]  = 0.5 + Math.random() * 0.45;
   }
 
@@ -254,7 +255,7 @@ function updateGlass(rect, on) {
 // ─── Render loop ──────────────────────────────────────────────────────────────
 let t = 0;
 const PI2 = Math.PI * 2;
-const IDLE_R = 5;
+const IDLE_R = 5 * (Math.min(window.innerWidth, window.innerHeight) / 1080);
 const FRAME_MS = 1000 / 30; // 30fps cap
 let lastFrameTime = 0;
 
