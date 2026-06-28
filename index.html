@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Depth Particle — MEP Interactive</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #000; overflow: hidden; font-family: 'Courier New', monospace; }
+    canvas { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; }
+
+    #glass {
+      position: fixed; display: none; pointer-events: none;
+      border-radius: 192px;
+      border: 1px solid rgba(255,255,255,0.38);
+      background: rgba(255,255,255,0.18);
+      backdrop-filter: blur(22px) saturate(1.4);
+      -webkit-backdrop-filter: blur(22px) saturate(1.4);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.22), 0 8px 40px rgba(0,0,0,0.12);
+      z-index: 3;
+    }
+    #hud {
+      position: fixed; top: 24px; left: 50%; transform: translateX(-50%);
+      padding: 7px 22px; border: 1px solid rgba(255,255,255,0.13); border-radius: 24px;
+      background: rgba(0,0,0,0.4); backdrop-filter: blur(14px);
+      color: rgba(255,255,255,0.35); font-size: 11px; letter-spacing: 0.18em;
+      text-transform: uppercase; white-space: nowrap; pointer-events: none;
+      transition: all .4s; z-index: 10;
+    }
+    #hud.on { color: rgba(160,220,255,0.9); border-color: rgba(160,220,255,0.28); box-shadow: 0 0 16px rgba(160,220,255,0.1); }
+    #hint { position: fixed; bottom: 26px; left: 26px; color: rgba(255,255,255,0.2); font-size: 11px; line-height: 1.9; pointer-events: none; z-index: 10; }
+    video { display: none; }
+  </style>
+</head>
+<body>
+
+<canvas id="feed" style="z-index:1"></canvas>
+<div id="glass"></div>
+<canvas id="fx" style="z-index:4"></canvas>
+
+<div id="hud">카메라 연결 중…</div>
+<div id="hint">
+  ✦ 양손 검지 + 엄지로 사각 프레임을 만들어 유지하세요<br>
+  ✦ Form a rectangle frame with both hands to activate
+</div>
+
+<video id="wv" playsinline muted></video>
+<canvas id="sc" style="display:none" width="640" height="480"></canvas>
+
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/hands.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3/camera_utils.js" crossorigin="anonymous"></script>
+<script>
+'use strict';
+
+// ─── Canvases ─────────────────────────────────────────────────────────────────
+const feedCanvas = document.getElementById('feed');
+const feedCtx    = feedCanvas.getContext('2d');
+const fxCanvas   = document.getElementById('fx');
+const fxCtx      = fxCanvas.getContext('2d');
+const sc         = document.getElementById('sc');
+const scCtx      = sc.getContext('2d', { willReadFrequently: true });
+const glassEl    = document.getElementById('glass');
+const hud        = document.getElementById('hud');
+
+const blob    = document.createElement('canvas');
+const blobCtx = blob.getContext('2d');
+
+function resize() {
+  const W = window.innerWidth, H = window.innerHeight;
+  [feedCanvas, fxCanvas, blob].forEach(c => { c.width = W; c.height = H; });
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ─── Palette ──────────────────────────────────────────────────────────────────
+const PAL_H = [268, 292, 188, 205, 158, 100, 58, 318, 340];
+const PAL_L = [ 68,  64,  72,  70,  70,  72, 75,  70,  66];
+const PAL_S = [ 72,  78,  80,  75,  75,  78, 76,  76,  82];
+
+function pickColor(depth) {
+  const anchor = (1 - depth) * 4.5;
+  const idx    = (Math.floor(anchor + Math.random() * 5) + PAL_H.length * 10) % PAL_H.length;
+  return { h: PAL_H[idx] + (Math.random()-.5)*28, s: PAL_S[idx], l: PAL_L[idx] + (Math.random()-.5)*6 };
+}
+
+// ─── Particle pool (dynamic size, capped) ────────────────────────────────────
+const N_MAX = 4000;
+let   N_cur = 0; // currently active particle count
+
+// Base positions (where the particle "belongs" in silhouette)
+const pbx  = new Float32Array(N_MAX);
+const pby  = new Float32Array(N_MAX);
+// Visual properties
+const ph   = new Float32Array(N_MAX);
+const psat = new Float32Array(N_MAX);
+const plig = new Float32Array(N_MAX);
+const prad = new Float32Array(N_MAX);
+// Alpha
+const pa   = new Float32Array(N_MAX);
+const pta  = new Float32Array(N_MAX);
+// Per-particle noise phase for idle motion
+const pno  = new Float32Array(N_MAX);
+const pno2 = new Float32Array(N_MAX);
+
+for (let i = 0; i < N_MAX; i++) {
+  pno[i]  = Math.random() * Math.PI * 2;
+  pno2[i] = Math.random() * Math.PI * 2;
+}
+
+// ─── Depth layer config ───────────────────────────────────────────────────────
+const layerCfg = [
+  { radBase: 3,  radRange: 2,  alphaMax: 0.50 }, // far
+  { radBase: 5,  radRange: 3,  alphaMax: 0.65 },
+  { radBase: 7,  radRange: 3,  alphaMax: 0.80 },
+  { radBase: 10, radRange: 4,  alphaMax: 1.00 }, // near
+];
+
+// ─── State ────────────────────────────────────────────────────────────────────
+let state     = 'IDLE';
+let frameRect = null;
+let clipRect  = null;
+let armStart  = 0;
+let lastBuild = 0;
+let segReady  = false;
+const ARM_MS = 600, REBUILD_MS = 200;
+
+// ─── Build targets — fills silhouette directly ───────────────────────────────
+function buildTargets(rect) {
+  if (!segReady) return;
+  const SW = sc.width, SH = sc.height;
+  const W  = fxCanvas.width, H = fxCanvas.height;
+  let imgData;
+  try { imgData = scCtx.getImageData(0, 0, SW, SH); }
+  catch(e) { return; }
+  const d = imgData.data;
+
+  // Collect silhouette pixels with luminance-based density (10~100)
+  const candidates = [];
+  const STEP = 5;
+
+  for (let sy = 0; sy < SH; sy += STEP) {
+    for (let sx = 0; sx < SW; sx += STEP) {
+      const idx   = (sy * SW + sx) * 4;
+      if (d[idx + 3] < 40) continue;
+
+      const scrX = (1 - sx / SW) * W;
+      const scrY = (sy / SH) * H;
+      if (scrX < rect.x1 || scrX > rect.x2 || scrY < rect.y1 || scrY > rect.y2) continue;
+
+      const lum     = 0.299*d[idx] + 0.587*d[idx+1] + 0.114*d[idx+2];
+      const density = 2 + (lum / 255) * 98; // 2(dark) ~ 100(bright)
+      // Probabilistic inclusion: bright pixels ~10× more likely than dark
+      if (Math.random() * 100 > density) continue;
+
+      const depth = lum / 255;
+      const layer = Math.min(3, Math.floor(depth * 4));
+      const col   = pickColor(depth);
+      candidates.push({ x: scrX, y: scrY, h: col.h, s: col.s, l: col.l, layer });
+    }
+  }
+
+  if (!candidates.length) return;
+
+  // Shuffle → random z-order (draw order no longer sorted top-to-bottom)
+  for (let i = candidates.length - 1; i > 0; i--) {
+    const j = (Math.random() * (i + 1)) | 0;
+    const tmp = candidates[i]; candidates[i] = candidates[j]; candidates[j] = tmp;
+  }
+
+  const newN = Math.min(N_MAX, candidates.length);
+
+  // Assign particles directly to silhouette positions
+  for (let i = 0; i < newN; i++) {
+    const c = candidates[i];
+    pbx[i]  = c.x;
+    pby[i]  = c.y;
+    ph[i]   = c.h;
+    psat[i] = c.s;
+    plig[i] = c.l;
+    prad[i] = 14 + Math.random() * 36; // 14~50px
+    pta[i]  = 0.5 + Math.random() * 0.45;
+  }
+
+  // Fade out any particles beyond new count
+  for (let i = newN; i < N_cur; i++) pta[i] = 0;
+  N_cur = Math.max(N_cur, newN);
+}
+
+// ─── Segmentation ─────────────────────────────────────────────────────────────
+const selfie = new SelfieSegmentation({
+  locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${f}`
+});
+selfie.setOptions({ modelSelection: 1 });
+selfie.onResults(res => {
+  const W = feedCanvas.width, H = feedCanvas.height;
+  feedCtx.save();
+  feedCtx.translate(W, 0); feedCtx.scale(-1, 1);
+  feedCtx.drawImage(res.image, 0, 0, W, H);
+  feedCtx.restore();
+
+  const SW = sc.width, SH = sc.height;
+  scCtx.clearRect(0, 0, SW, SH);
+  scCtx.drawImage(res.image, 0, 0, SW, SH);
+  scCtx.globalCompositeOperation = 'destination-in';
+  scCtx.drawImage(res.segmentationMask, 0, 0, SW, SH);
+  scCtx.globalCompositeOperation = 'source-over';
+  segReady = true;
+});
+
+// ─── Hands ────────────────────────────────────────────────────────────────────
+function indexUp(lm) { return lm[8].y < lm[6].y - 0.01; }
+
+const hands = new Hands({ locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/${f}` });
+hands.setOptions({ maxNumHands:2, modelComplexity:1, minDetectionConfidence:0.6, minTrackingConfidence:0.5 });
+hands.onResults(res => {
+  const mhl = res.multiHandLandmarks;
+  const W = fxCanvas.width, H = fxCanvas.height;
+  if (!mhl || mhl.length < 2 || !mhl.every(lm => indexUp(lm))) { frameRect = null; return; }
+
+  const xVals = mhl.map(lm => (1 - lm[8].x) * W);
+  const yVals = []; mhl.forEach(lm => { yVals.push(lm[8].y*H, lm[4].y*H); });
+
+  const x1 = Math.min(...xVals), x2 = Math.max(...xVals);
+  const y1 = Math.min(...yVals), y2 = Math.max(...yVals);
+  if (x2-x1 < 50 || y2-y1 < 40) { frameRect = null; return; }
+  frameRect = { x1: x1-14, y1: y1-14, x2: x2+14, y2: y2+14 };
+});
+
+// ─── Camera ───────────────────────────────────────────────────────────────────
+const wv = document.getElementById('wv');
+let tick = 0;
+const cam = new Camera(wv, {
+  onFrame: async () => {
+    tick++;
+    await hands.send({ image: wv });
+    if (tick % 2 === 0) await selfie.send({ image: wv });
+  },
+  width: 1280, height: 720
+});
+cam.start().then(() => { hud.textContent = '양손으로 사각 프레임을 만들어보세요'; })
+           .catch(() => { hud.textContent = '카메라 접근 실패 — 권한을 허용하세요'; });
+
+// ─── Glass div ────────────────────────────────────────────────────────────────
+function updateGlass(rect, on) {
+  if (!on || !rect) { glassEl.style.display = 'none'; return; }
+  glassEl.style.display = 'block';
+  glassEl.style.left   = rect.x1 + 'px';
+  glassEl.style.top    = rect.y1 + 'px';
+  glassEl.style.width  = (rect.x2 - rect.x1) + 'px';
+  glassEl.style.height = (rect.y2 - rect.y1) + 'px';
+}
+
+// ─── Render loop ──────────────────────────────────────────────────────────────
+let t = 0;
+const PI2 = Math.PI * 2;
+const IDLE_R = 5;
+const FRAME_MS = 1000 / 30; // 30fps cap
+let lastFrameTime = 0;
+
+function animate(now) {
+  requestAnimationFrame(animate);
+  if (now - lastFrameTime < FRAME_MS) return;
+  lastFrameTime = now;
+  t += 1 / 30;
+  const W = fxCanvas.width, H = fxCanvas.height;
+  fxCtx.clearRect(0, 0, W, H);
+
+  // ── State machine ──────────────────────────────────────────────────────────
+  if (frameRect) {
+    clipRect = { ...frameRect };
+    if (state === 'IDLE') {
+      state = 'ARMING'; armStart = now;
+      hud.textContent = '프레임 인식 — 유지하세요…'; hud.className = '';
+    } else if (state === 'ARMING' && now - armStart >= ARM_MS) {
+      state = 'ACTIVE'; hud.textContent = 'DEPTH PARTICLE MODE'; hud.className = 'on';
+      buildTargets(frameRect); lastBuild = now;
+    } else if (state === 'ACTIVE' && now - lastBuild >= REBUILD_MS) {
+      buildTargets(frameRect); lastBuild = now;
+    }
+  } else {
+    if (state === 'ACTIVE' || state === 'ARMING') {
+      state = 'FADING'; hud.textContent = '양손으로 사각 프레임을 만들어보세요'; hud.className = '';
+      for (let i = 0; i < N_cur; i++) pta[i] = 0;
+    } else if (state === 'FADING') {
+      let done = true;
+      for (let i = 0; i < N_cur; i++) if (pa[i] > 0.005) { done = false; break; }
+      if (done) { state = 'IDLE'; clipRect = null; N_cur = 0; }
+    }
+  }
+
+  updateGlass(frameRect, state === 'ARMING' || state === 'ACTIVE');
+
+  // ── Particles ─────────────────────────────────────────────────────────────
+  if (state !== 'IDLE' && N_cur > 0) {
+    blobCtx.clearRect(0, 0, W, H);
+
+    for (let i = 0; i < N_cur; i++) {
+      // Fade in/out (faster out)
+      const fadeK = pta[i] === 0 ? 0.06 : 0.04;
+      pa[i] += (pta[i] - pa[i]) * fadeK;
+      if (pa[i] < 0.005) continue;
+
+      // Tiny idle motion around base position (~5px radius)
+      const idleSpd = 0.4 + (pno[i] % 1) * 0.3;
+      const cx = pbx[i] + Math.cos(t * idleSpd       + pno[i])  * IDLE_R;
+      const cy = pby[i] + Math.sin(t * idleSpd * 1.1 + pno2[i]) * IDLE_R;
+
+      blobCtx.beginPath();
+      blobCtx.arc(cx, cy, prad[i], 0, PI2);
+      blobCtx.fillStyle = `hsla(${ph[i]},${psat[i]}%,${plig[i]}%,${Math.min(1, pa[i])})`;
+      blobCtx.fill();
+    }
+
+    // Composite to fx canvas clipped to domain
+    fxCtx.save();
+    if (clipRect) {
+      const { x1, y1, x2, y2 } = clipRect;
+      fxCtx.beginPath();
+      fxCtx.roundRect(x1, y1, x2-x1, y2-y1, 192);
+      fxCtx.clip();
+    }
+    fxCtx.filter = 'blur(7px)';
+    fxCtx.drawImage(blob, 0, 0);
+    fxCtx.filter = 'none';
+    fxCtx.restore();
+  }
+
+  // ── Scan line ──────────────────────────────────────────────────────────────
+  if (frameRect && state === 'ACTIVE') {
+    const { x1, y1, x2, y2 } = frameRect;
+    const sy = y1 + (t * 40 % Math.max(1, y2 - y1));
+    fxCtx.save();
+    fxCtx.beginPath(); fxCtx.roundRect(x1, y1, x2-x1, y2-y1, 192); fxCtx.clip();
+    const g = fxCtx.createLinearGradient(0, sy-22, 0, sy+22);
+    g.addColorStop(0, 'rgba(180,220,255,0)'); g.addColorStop(.5, 'rgba(180,220,255,0.07)'); g.addColorStop(1, 'rgba(180,220,255,0)');
+    fxCtx.fillStyle = g; fxCtx.fillRect(x1, sy-22, x2-x1, 44);
+    fxCtx.restore();
+  }
+
+  // ── Arming ring ────────────────────────────────────────────────────────────
+  if (frameRect && state === 'ARMING') {
+    const cx = (frameRect.x1+frameRect.x2)/2, cy = (frameRect.y1+frameRect.y2)/2;
+    fxCtx.save();
+    fxCtx.strokeStyle = 'rgba(200,230,255,0.85)'; fxCtx.lineWidth = 2;
+    fxCtx.shadowColor = 'rgba(160,210,255,0.7)'; fxCtx.shadowBlur = 10;
+    fxCtx.beginPath();
+    fxCtx.arc(cx, cy, 26, -Math.PI/2, -Math.PI/2 + PI2 * ((now - armStart) / ARM_MS));
+    fxCtx.stroke();
+    fxCtx.restore();
+  }
+
+  // ── Silhouette debug preview (bottom-right) ────────────────────────────────
+  {
+    const pw = 192, ph2 = 108;
+    const px2 = W - pw - 16, py2 = H - ph2 - 16;
+    fxCtx.save();
+    fxCtx.globalAlpha = 0.9;
+    fxCtx.fillStyle = '#000';
+    fxCtx.fillRect(px2, py2, pw, ph2);
+    fxCtx.translate(px2 + pw, py2);
+    fxCtx.scale(-1, 1);
+    fxCtx.drawImage(sc, 0, 0, sc.width, sc.height, 0, 0, pw, ph2);
+    fxCtx.setTransform(1, 0, 0, 1, 0, 0);
+    fxCtx.globalAlpha = 1;
+    fxCtx.strokeStyle = 'rgba(255,255,255,0.3)';
+    fxCtx.lineWidth = 1;
+    fxCtx.strokeRect(px2, py2, pw, ph2);
+    fxCtx.fillStyle = 'rgba(255,255,255,0.3)';
+    fxCtx.font = '10px monospace';
+    fxCtx.fillText('SEG', px2 + 6, py2 + 14);
+    fxCtx.restore();
+  }
+
+  // ── Vignette ───────────────────────────────────────────────────────────────
+  const vg = fxCtx.createRadialGradient(W/2, H/2, H*0.3, W/2, H/2, H*0.9);
+  vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(0,0,0,0.38)');
+  fxCtx.fillStyle = vg; fxCtx.fillRect(0, 0, W, H);
+}
+
+requestAnimationFrame(animate);
+</script>
+</body>
+</html>
