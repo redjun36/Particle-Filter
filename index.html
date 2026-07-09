@@ -11,38 +11,118 @@
 
     #glass {
       position: fixed; display: none; pointer-events: none;
-      border-radius: 18vmin;
+      border-radius: 5.4vmin;
       border: 1px solid rgba(255,255,255,0.38);
-      background: rgba(255,255,255,0.18);
-      backdrop-filter: blur(22px) saturate(1.4);
-      -webkit-backdrop-filter: blur(22px) saturate(1.4);
+      background: #fff;
       box-shadow: inset 0 0 0 1px rgba(255,255,255,0.22), 0 8px 40px rgba(0,0,0,0.12);
       z-index: 3;
+      transition: box-shadow .5s ease, border-color .5s ease;
     }
-    #hud {
-      position: fixed; top: 24px; left: 50%; transform: translateX(-50%);
-      padding: 7px 22px; border: 1px solid rgba(255,255,255,0.13); border-radius: 24px;
-      background: rgba(0,0,0,0.4); backdrop-filter: blur(14px);
-      color: rgba(255,255,255,0.35); font-size: 11px; letter-spacing: 0.18em;
-      text-transform: uppercase; white-space: nowrap; pointer-events: none;
-      transition: all .4s; z-index: 10;
+    /* Replaces the old spinner-style "arming ring" — a slow, soft breathing
+       glow on the frame itself reads as "recognizing you" without looking
+       like a loading indicator. */
+    #glass.arming {
+      border-color: rgba(200,230,255,0.55);
+      animation: armGlow 1.1s ease-in-out infinite;
     }
-    #hud.on { color: rgba(160,220,255,0.9); border-color: rgba(160,220,255,0.28); box-shadow: 0 0 16px rgba(160,220,255,0.1); }
-    #hint { position: fixed; bottom: 26px; left: 26px; color: rgba(255,255,255,0.2); font-size: 11px; line-height: 1.9; pointer-events: none; z-index: 10; }
+    @keyframes armGlow {
+      0%, 100% { box-shadow: inset 0 0 0 1px rgba(255,255,255,0.22), 0 0 18px rgba(160,210,255,0.15); }
+      50%      { box-shadow: inset 0 0 0 1px rgba(200,230,255,0.5),  0 0 34px rgba(160,210,255,0.4); }
+    }
+    #camError {
+      position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%);
+      color: rgba(255,120,120,0.75); font-size: 11px; letter-spacing: 0.08em;
+      pointer-events: none; z-index: 20; display: none;
+      font-family: -apple-system, 'Malgun Gothic', sans-serif;
+    }
     video { display: none; }
+
+    /* ─── Attract (idle/loop) screen ──────────────────────────────────────── */
+    #attractBg { position: fixed; inset: 0; background: #000; z-index: 2; display: none; }
+    #attract {
+      position: fixed; inset: 0; z-index: 5; display: none;
+      flex-direction: column; align-items: center; justify-content: center;
+      pointer-events: none;
+    }
+    #attractLogo { width: 22vmin; margin-bottom: 2.2vmin; }
+    #attractLogo svg { width: 100%; height: auto; display: block; filter: invert(1); }
+    #attractTag {
+      color: rgba(255,255,255,0.55); font-size: 1.7vmin; letter-spacing: 0.04em;
+      font-family: -apple-system, 'Malgun Gothic', sans-serif;
+    }
+
+    /* ─── Intro (onboarding) screen ───────────────────────────────────────── */
+    #intro {
+      position: fixed; inset: 0; z-index: 6; display: none;
+      flex-direction: column; align-items: center;
+      background: linear-gradient(to bottom, #fff 0%, #fff 14%, #262626 46%, #262626 62%, #fff 100%);
+      pointer-events: none;
+    }
+    #introBody { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3.2vmin; }
+    #introText {
+      color: #fff; font-size: 2.1vmin; line-height: 1.6; text-align: center;
+      font-family: -apple-system, 'Malgun Gothic', sans-serif;
+    }
+    #introText b { font-weight: 700; }
+    #introIcon { width: 17vmin; color: #fff; }
+    #introIcon svg { width: 100%; height: auto; display: block; }
+
+    /* ─── Persistent top logo + light band (intro/arming/active) ─────────── */
+    #topBand {
+      position: fixed; top: 0; left: 0; right: 0; height: 15vmin; z-index: 7;
+      background: linear-gradient(to bottom, rgba(255,255,255,0.94), rgba(255,255,255,0));
+      pointer-events: none; display: none;
+    }
+    #topLogo {
+      position: fixed; top: 3.6vmin; left: 50%; transform: translateX(-50%);
+      width: 13vmin; z-index: 9; display: none; pointer-events: none;
+    }
+    #topLogo svg { width: 100%; height: auto; display: block; }
+
+    /* ─── Live-view gesture reminder (arming) ─────────────────────────────── */
+    #guide {
+      position: fixed; left: 50%; bottom: 9vmin; transform: translateX(-50%);
+      z-index: 8; display: none; flex-direction: column; align-items: center; gap: 1.6vmin;
+      padding: 2.4vmin 3.6vmin; border-radius: 2.2vmin;
+      background: rgba(0,0,0,0.38); backdrop-filter: blur(8px);
+      pointer-events: none;
+    }
+    #guideText {
+      color: #fff; font-size: 1.6vmin; line-height: 1.55; text-align: center;
+      font-family: -apple-system, 'Malgun Gothic', sans-serif;
+    }
+    #guideIcon { width: 9vmin; color: #fff; }
+    #guideIcon svg { width: 100%; height: auto; display: block; }
   </style>
 </head>
 <body>
 
 <canvas id="feed" style="z-index:1"></canvas>
+<div id="attractBg"></div>
 <div id="glass"></div>
 <canvas id="fx" style="z-index:4"></canvas>
+<div id="topBand"></div>
 
-<div id="hud">카메라 연결 중…</div>
-<div id="hint">
-  ✦ 양손 검지 + 엄지로 사각 프레임을 만들어 유지하세요<br>
-  ✦ Form a rectangle frame with both hands to activate
+<div id="attract">
+  <div id="attractLogo"></div>
+  <div id="attractTag">Open your eyes and gaze.</div>
 </div>
+
+<div id="intro">
+  <div id="introBody">
+    <div id="introText">핸드 제스쳐를 취하고,<br>every else의 시선을 체험해보세요</div>
+    <div id="introIcon"></div>
+  </div>
+</div>
+
+<div id="topLogo"></div>
+
+<div id="guide">
+  <div id="guideText">핸드 제스쳐를 취하고,<br>every else의 시선을 체험해보세요</div>
+  <div id="guideIcon"></div>
+</div>
+
+<div id="camError">카메라 접근 실패 — 권한을 허용하세요</div>
 
 <video id="wv" playsinline muted></video>
 <canvas id="sc" style="display:none" width="640" height="480"></canvas>
@@ -61,7 +141,39 @@ const fxCtx      = fxCanvas.getContext('2d');
 const sc         = document.getElementById('sc');
 const scCtx      = sc.getContext('2d', { willReadFrequently: true });
 const glassEl    = document.getElementById('glass');
-const hud        = document.getElementById('hud');
+const camErrorEl = document.getElementById('camError');
+
+// ─── Exhibition screens ───────────────────────────────────────────────────────
+const attractBgEl = document.getElementById('attractBg');
+const attractEl   = document.getElementById('attract');
+const introEl     = document.getElementById('intro');
+const topBandEl   = document.getElementById('topBand');
+const topLogoEl   = document.getElementById('topLogo');
+const guideEl     = document.getElementById('guide');
+
+const LOGO_SVG = `<svg viewBox="0 0 288 63" fill="none" xmlns="http://www.w3.org/2000/svg">
+<path d="M271.592 49.1592C261.441 49.1592 254.975 42.3457 254.975 31.291C254.975 20.2364 261.371 13.4229 271.592 13.4229C281.604 13.4229 288 20.0974 288 31.0129V33.3073H263.04C263.457 39.4951 267.212 42.5543 271.731 42.5543C275.068 42.5543 277.988 40.8856 279.379 37.757H287.444C285.288 44.9877 279.657 49.1592 271.592 49.1592ZM280.004 27.2585C279.17 22.4612 275.902 20.0278 271.731 20.0278C267.559 20.0278 264.292 22.4612 263.318 27.2585H280.004Z" fill="black"/>
+<path d="M237.277 49.1592C227.682 49.1592 222.051 45.2658 221.703 37.757H228.934C229.421 41.0942 232.132 43.1105 237.416 43.1105C242.422 43.1105 244.994 41.3028 244.994 38.7303C244.994 36.0188 243.604 34.8369 235.469 33.7245C226.014 32.473 222.259 29.7615 222.259 23.9908C222.259 17.803 227.752 13.4229 237.207 13.4229C245.829 13.4229 251.46 16.9687 252.016 24.408H244.855C244.091 20.6536 241.031 19.4716 237.207 19.4716C232.966 19.4716 230.116 20.8621 230.116 23.5041C230.116 26.0071 231.993 26.9109 239.363 28.0233C249.235 29.4138 252.99 32.1949 252.99 38.3827C252.99 44.9181 247.358 49.1592 237.277 49.1592Z" fill="black"/>
+<path d="M210.207 48.6682V0H218.341V48.6682H210.207Z" fill="black"/>
+<path d="M190.321 49.1592C180.17 49.1592 173.704 42.3457 173.704 31.291C173.704 20.2364 180.1 13.4229 190.321 13.4229C200.333 13.4229 206.729 20.0974 206.729 31.0129V33.3073H181.769C182.186 39.4951 185.941 42.5543 190.46 42.5543C193.797 42.5543 196.717 40.8856 198.108 37.757H206.173C204.017 44.9877 198.386 49.1592 190.321 49.1592ZM198.733 27.2585C197.899 22.4612 194.631 20.0278 190.46 20.0278C186.288 20.0278 183.021 22.4612 182.047 27.2585H198.733Z" fill="black"/>
+<path d="M134.549 62.5764L141.502 46.8635L127.318 13.9082H136.218L143.379 32.124C143.935 33.5145 144.908 38.3118 144.908 38.6595H146.438C146.438 38.3118 147.411 33.5145 147.968 32.124L155.198 13.9082H163.959L142.962 62.5764H134.549Z" fill="black"/>
+<path d="M103.515 48.6712V13.9082H110.884L110.954 15.2987C111.023 16.7588 110.745 18.5664 110.259 20.1655L111.719 20.5827C113.04 16.133 115.89 13.9082 120.827 13.9082H124.372V20.7218H120.827C115.751 20.7218 111.649 23.5028 111.649 31.2897V48.6712H103.515Z" fill="black"/>
+<path d="M83.7652 49.1592C73.6144 49.1592 67.1484 42.3457 67.1484 31.291C67.1484 20.2364 73.5448 13.4229 83.7652 13.4229C93.7769 13.4229 100.173 20.0974 100.173 31.0129V33.3073H75.2135C75.6306 39.4951 79.385 42.5543 83.9042 42.5543C87.2415 42.5543 90.1616 40.8856 91.5521 37.757H99.6171C97.4618 44.9877 91.8302 49.1592 83.7652 49.1592ZM92.1778 27.2585C91.3435 22.4612 88.0758 20.0278 83.9042 20.0278C79.7326 20.0278 76.4649 22.4612 75.4916 27.2585H92.1778Z" fill="black"/>
+<path d="M45.5637 48.6712L32.2842 13.9082H40.9054L47.9275 33.5145C48.4837 34.9051 49.2485 39.7024 49.2485 40.1195H50.7086C50.7086 39.7024 51.5429 34.9051 52.0296 33.5145L59.1212 13.9082H67.812L54.463 48.6712H45.5637Z" fill="black"/>
+<path d="M16.6167 49.1592C6.46592 49.1592 0 42.3457 0 31.291C0 20.2364 6.3964 13.4229 16.6167 13.4229C26.6285 13.4229 33.0249 20.0974 33.0249 31.0129V33.3073H8.06502C8.48218 39.4951 12.2366 42.5543 16.7558 42.5543C20.093 42.5543 23.0131 40.8856 24.4036 37.757H32.4687C30.3134 44.9877 24.6817 49.1592 16.6167 49.1592ZM25.0294 27.2585C24.1951 22.4612 20.9273 20.0278 16.7558 20.0278C12.5842 20.0278 9.31649 22.4612 8.34313 27.2585H25.0294Z" fill="black"/>
+</svg>`;
+
+// Simplified line-art "frame with two hands" cue — two opposite L-shaped
+// corners (thumb+index) rather than an attempt at literal hand anatomy.
+const HAND_ICON_SVG = `<svg viewBox="0 0 120 90" fill="none" xmlns="http://www.w3.org/2000/svg" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
+<path d="M15 20 L55 20 M15 20 L15 50 M15 20 L28 32"/>
+<path d="M105 70 L65 70 M105 70 L105 40 M105 70 L92 58"/>
+</svg>`;
+
+attractEl.querySelector('#attractLogo').innerHTML = LOGO_SVG;
+topLogoEl.innerHTML                               = LOGO_SVG;
+introEl.querySelector('#introIcon').innerHTML     = HAND_ICON_SVG;
+guideEl.querySelector('#guideIcon').innerHTML     = HAND_ICON_SVG;
 
 const blob    = document.createElement('canvas');
 const blobCtx = blob.getContext('2d');
@@ -73,39 +185,100 @@ function resize() {
 window.addEventListener('resize', resize);
 resize();
 
-// ─── Palette ──────────────────────────────────────────────────────────────────
-const PAL_H = [268, 292, 188, 205, 158, 100, 58, 318, 340];
-const PAL_L = [ 68,  64,  72,  70,  70,  72, 75,  70,  66];
-const PAL_S = [ 72,  78,  80,  75,  75,  78, 76,  76,  82];
+// ─── Palette — from the reference brand color sheet ──────────────────────────
+const PALETTE = [
+  [253, 209, 231], // pale pink
+  [250, 140, 238], // every Love (magenta pink)
+  [201, 131, 247], // purple
+  [124, 161, 251], // blue
+  [ 0, 190, 252], // every Calm (cyan)
+  [ 95, 250, 234], // turquoise
+  [251, 130, 104], // coral
+  [253, 181, 108], // orange
+  [250, 251, 156], // every Warmth (pale yellow)
+  [193, 250, 108], // lime
+  [ 0, 218, 130], // every Bloom (green)
+  [166, 244, 214], // mint
+];
 
-function pickColor(depth) {
-  const anchor = (1 - depth) * 4.5;
-  const idx    = (Math.floor(anchor + Math.random() * 5) + PAL_H.length * 10) % PAL_H.length;
-  return { h: PAL_H[idx] + (Math.random()-.5)*28, s: PAL_S[idx], l: PAL_L[idx] + (Math.random()-.5)*6 };
+function pickColor() {
+  const [r, g, b] = PALETTE[(Math.random() * PALETTE.length) | 0];
+  const jitter = () => (Math.random() - 0.5) * 16;
+  return {
+    r: Math.min(255, Math.max(0, r + jitter())),
+    g: Math.min(255, Math.max(0, g + jitter())),
+    b: Math.min(255, Math.max(0, b + jitter())),
+  };
 }
 
-// ─── Particle pool (dynamic size, capped) ────────────────────────────────────
-const N_MAX = 4000;
+// ─── Particle pool — fixed slots ──────────────────────────────────────────────
+// Each particle index owns a permanent anchor point (in `sc` mask-space),
+// assigned once below and never reassigned. A rebuild only turns a slot's
+// alpha on/off depending on whether its anchor currently falls inside the
+// silhouette+domain — it never moves the anchor. That's what makes "no more
+// flicker" possible: there's nothing to interpolate between, because a given
+// particle never has a new target to jump to in the first place.
+const N_MAX = 3000; // denser fill — less gap, still shows real background through
 let   N_cur = 0; // currently active particle count
 
-// Base positions (where the particle "belongs" in silhouette)
+// Fixed anchor, in `sc` (mask) space — set once in the init loop below
+const psx  = new Float32Array(N_MAX);
+const psy  = new Float32Array(N_MAX);
+// Per-anchor fixed "luck" threshold for the density check in buildTargets —
+// rolled once at init, not re-rolled every rebuild. Re-rolling it every 200ms
+// was the real bug behind "particles keep jumping to random spots": a static
+// silhouette would still make ~1/3 of the anchors flip on/off each cycle for
+// no reason, which reads as flicker/relocation even though no anchor ever
+// actually moved. A fixed threshold makes an anchor's on/off state track the
+// silhouette only, not a fresh coin flip.
+const pluck = new Float32Array(N_MAX);
+// Base positions — the anchor projected into screen space (recomputed each
+// build so a window resize keeps particles correctly placed)
 const pbx  = new Float32Array(N_MAX);
 const pby  = new Float32Array(N_MAX);
+// Per-particle phase for the small idle float + size pulse (see render loop)
+const pph  = new Float32Array(N_MAX);
+const pph2 = new Float32Array(N_MAX);
 // Visual properties
-const ph   = new Float32Array(N_MAX);
-const psat = new Float32Array(N_MAX);
-const plig = new Float32Array(N_MAX);
-const prad = new Float32Array(N_MAX);
-// Alpha
-const pa   = new Float32Array(N_MAX);
+const pr   = new Float32Array(N_MAX);
+const pg   = new Float32Array(N_MAX);
+const pb   = new Float32Array(N_MAX);
+const prad = new Float32Array(N_MAX); // base/target radius, rolled when a slot activates
+// On/off state — 1 = visible, 0 = not. No fade in between; see buildTargets.
 const pta  = new Float32Array(N_MAX);
-// Per-particle noise phase for idle motion
-const pno  = new Float32Array(N_MAX);
-const pno2 = new Float32Array(N_MAX);
 
 for (let i = 0; i < N_MAX; i++) {
-  pno[i]  = Math.random() * Math.PI * 2;
-  pno2[i] = Math.random() * Math.PI * 2;
+  pluck[i] = Math.random() * 100;
+  pph[i]   = Math.random() * Math.PI * 2;
+  pph2[i]  = Math.random() * Math.PI * 2;
+}
+
+// Lay the anchors out on a jittered grid spanning the whole mask canvas, then
+// shuffle which array index owns which anchor. That one-time shuffle is what
+// keeps draw order (index order) from following scan order — which is what
+// caused the shingled/fish-scale look (every particle below always painting
+// over the one above it wherever they overlapped).
+{
+  const SW = 640, SH = 480; // matches the `sc` canvas below
+  const cols = Math.max(1, Math.round(Math.sqrt(N_MAX * SW / SH)));
+  const rows = Math.max(1, Math.ceil(N_MAX / cols));
+  const cellW = SW / cols, cellH = SH / rows;
+  const anchors = [];
+  for (let ry = 0; ry < rows; ry++) {
+    for (let rx = 0; rx < cols; rx++) {
+      if (anchors.length >= N_MAX) break;
+      anchors.push({
+        x: (rx + 0.15 + Math.random() * 0.7) * cellW,
+        y: (ry + 0.15 + Math.random() * 0.7) * cellH,
+      });
+    }
+  }
+  for (let i = anchors.length - 1; i > 0; i--) {
+    const j = (Math.random() * (i + 1)) | 0;
+    const tmp = anchors[i]; anchors[i] = anchors[j]; anchors[j] = tmp;
+  }
+  for (let i = 0; i < anchors.length; i++) { psx[i] = anchors[i].x; psy[i] = anchors[i].y; }
+  N_cur = anchors.length;
 }
 
 // ─── Depth layer config ───────────────────────────────────────────────────────
@@ -117,15 +290,18 @@ const layerCfg = [
 ];
 
 // ─── State ────────────────────────────────────────────────────────────────────
-let state     = 'IDLE';
-let frameRect = null;
-let clipRect  = null;
-let armStart  = 0;
-let lastBuild = 0;
-let segReady  = false;
-const ARM_MS = 600, REBUILD_MS = 200;
+// IDLE (attract loop) -> INTRO (onboarding graphic) -> ARMING (live view + hint)
+// -> ACTIVE (the particle effect)
+let state      = 'IDLE';
+let frameRect  = null;
+let clipRect   = null;
+let introStart = 0;
+let armStart   = 0;
+let lastBuild  = 0;
+let segReady   = false;
+const INTRO_MS = 2600, ARM_MS = 600, REBUILD_MS = 200;
 
-// ─── Build targets — fills silhouette directly ───────────────────────────────
+// ─── Build targets — tests each fixed anchor against the current silhouette ──
 function buildTargets(rect) {
   if (!segReady) return;
   const SW = sc.width, SH = sc.height;
@@ -134,58 +310,42 @@ function buildTargets(rect) {
   try { imgData = scCtx.getImageData(0, 0, SW, SH); }
   catch(e) { return; }
   const d = imgData.data;
+  const scale = Math.min(W, H) / 1080;
 
-  // Collect silhouette pixels with luminance-based density (10~100)
-  const candidates = [];
-  const STEP = 5;
+  for (let i = 0; i < N_cur; i++) {
+    const sx = psx[i] | 0, sy = psy[i] | 0;
+    const idx = (sy * SW + sx) * 4;
 
-  for (let sy = 0; sy < SH; sy += STEP) {
-    for (let sx = 0; sx < SW; sx += STEP) {
-      const idx   = (sy * SW + sx) * 4;
-      if (d[idx + 3] < 40) continue;
+    const scrX = (1 - sx / SW) * W;
+    const scrY = (sy / SH) * H;
+    pbx[i] = scrX;
+    pby[i] = scrY;
 
-      const scrX = (1 - sx / SW) * W;
-      const scrY = (sy / SH) * H;
-      if (scrX < rect.x1 || scrX > rect.x2 || scrY < rect.y1 || scrY > rect.y2) continue;
-
-      const lum     = 0.299*d[idx] + 0.587*d[idx+1] + 0.114*d[idx+2];
-      const density = 2 + (lum / 255) * 98; // 2(dark) ~ 100(bright)
-      // Probabilistic inclusion: bright pixels ~10× more likely than dark
-      if (Math.random() * 100 > density) continue;
-
-      const depth = lum / 255;
-      const layer = Math.min(3, Math.floor(depth * 4));
-      const col   = pickColor(depth);
-      candidates.push({ x: scrX, y: scrY, h: col.h, s: col.s, l: col.l, layer });
+    if (d[idx + 3] < 40 || scrX < rect.x1 || scrX > rect.x2 || scrY < rect.y1 || scrY > rect.y2) {
+      pta[i] = 0; // instant off, no fade-out ramp
+      continue;
     }
+
+    const lum     = 0.299*d[idx] + 0.587*d[idx+1] + 0.114*d[idx+2];
+    const density = 32 + (lum / 255) * 68; // 32(dark) ~ 100(bright)
+    // Bright anchors more likely than dark, but dark regions (hair/dark
+    // clothing) still get enough coverage to stay legible. Uses this anchor's
+    // fixed pluck value, not a fresh roll, so the on/off state only changes
+    // when the silhouette under it actually changes.
+    if (pluck[i] > density) { pta[i] = 0; continue; }
+
+    if (pta[i] !== 1) {
+      // Only re-roll color/size when the slot is newly activating — keeps a
+      // continuously-visible particle's look stable instead of relabeling it
+      // every 200ms.
+      const col = pickColor();
+      pr[i] = col.r; pg[i] = col.g; pb[i] = col.b;
+      // Same base size as before, scaled up by a random 1x~2.5x factor so
+      // particle size varies noticeably.
+      prad[i] = (6 + Math.random() * 14) * scale * (1 + Math.random() * 1.5);
+    }
+    pta[i] = 1; // fully opaque so overlapping particles fully occlude, not blend, and instant — no fade-in ramp
   }
-
-  if (!candidates.length) return;
-
-  // Shuffle → random z-order (draw order no longer sorted top-to-bottom)
-  for (let i = candidates.length - 1; i > 0; i--) {
-    const j = (Math.random() * (i + 1)) | 0;
-    const tmp = candidates[i]; candidates[i] = candidates[j]; candidates[j] = tmp;
-  }
-
-  const newN = Math.min(N_MAX, candidates.length);
-
-  // Assign particles directly to silhouette positions
-  for (let i = 0; i < newN; i++) {
-    const c = candidates[i];
-    pbx[i]  = c.x;
-    pby[i]  = c.y;
-    ph[i]   = c.h;
-    psat[i] = c.s;
-    plig[i] = c.l;
-    const scale = Math.min(W, H) / 1080;
-    prad[i] = (14 + Math.random() * 36) * scale;
-    pta[i]  = 0.5 + Math.random() * 0.45;
-  }
-
-  // Fade out any particles beyond new count
-  for (let i = newN; i < N_cur; i++) pta[i] = 0;
-  N_cur = Math.max(N_cur, newN);
 }
 
 // ─── Segmentation ─────────────────────────────────────────────────────────────
@@ -239,23 +399,73 @@ const cam = new Camera(wv, {
   },
   width: 1280, height: 720
 });
-cam.start().then(() => { hud.textContent = '양손으로 사각 프레임을 만들어보세요'; })
-           .catch(() => { hud.textContent = '카메라 접근 실패 — 권한을 허용하세요'; });
+cam.start().catch(() => { camErrorEl.style.display = 'block'; });
 
 // ─── Glass div ────────────────────────────────────────────────────────────────
-function updateGlass(rect, on) {
-  if (!on || !rect) { glassEl.style.display = 'none'; return; }
+function updateGlass(rect, on, arming) {
+  if (!on || !rect) { glassEl.style.display = 'none'; glassEl.classList.remove('arming'); return; }
   glassEl.style.display = 'block';
   glassEl.style.left   = rect.x1 + 'px';
   glassEl.style.top    = rect.y1 + 'px';
   glassEl.style.width  = (rect.x2 - rect.x1) + 'px';
   glassEl.style.height = (rect.y2 - rect.y1) + 'px';
+  glassEl.classList.toggle('arming', !!arming);
+}
+
+// ─── Exhibition screens ────────────────────────────────────────────────────────
+// feed canvas is only meaningful once the person is actually being guided into
+// or is inside the experience — attract/intro are stylized, camera-free screens.
+function updateScreens(state) {
+  attractBgEl.style.display = state === 'IDLE'  ? 'block' : 'none';
+  attractEl.style.display   = state === 'IDLE'  ? 'flex'  : 'none';
+  introEl.style.display     = state === 'INTRO' ? 'flex'  : 'none';
+  const live = state === 'ARMING' || state === 'ACTIVE';
+  feedCanvas.style.display  = live ? 'block' : 'none';
+  topBandEl.style.display   = live ? 'block' : 'none';
+  topLogoEl.style.display   = (state === 'INTRO' || live) ? 'block' : 'none';
+  guideEl.style.display     = state === 'ARMING' ? 'flex' : 'none';
+}
+
+// Attract-loop ring: same 12 brand colors as the particle palette, laid out in
+// a slowly rotating circle. Per-dot placement/size jitter is rolled once so
+// the ring reads as organic rather than a perfectly even polygon; only the
+// ring's overall radius "breathes" in and out — the dots themselves never
+// change size, per the brief.
+const ringJitterR = PALETTE.map(() => 0.85 + Math.random() * 0.3);
+const ringJitterA = PALETTE.map(() => (Math.random() - 0.5) * 0.15);
+const ringDotScale = PALETTE.map(() => 0.7 + Math.random() * 0.6);
+const RING_ROTATE_S  = 25; // seconds per full rotation — slow, ambient
+const RING_BREATHE_S = 7;  // seconds per breathe cycle
+
+function drawAttractRing(W, H) {
+  const cx = W / 2, cy = H / 2;
+  const baseR = Math.min(W, H) * 0.30;
+  const breathe = 1 + Math.sin((t / RING_BREATHE_S) * PI2) * 0.12;
+  const rot = (t / RING_ROTATE_S) * PI2;
+  const dotR = Math.min(W, H) * 0.014;
+  for (let i = 0; i < PALETTE.length; i++) {
+    const a = rot + (i / PALETTE.length) * PI2 + ringJitterA[i];
+    const R = baseR * breathe * ringJitterR[i];
+    const x = cx + Math.cos(a) * R;
+    const y = cy + Math.sin(a) * R;
+    const [r, g, b] = PALETTE[i];
+    fxCtx.beginPath();
+    fxCtx.arc(x, y, dotR * ringDotScale[i], 0, PI2);
+    fxCtx.fillStyle = `rgb(${r},${g},${b})`;
+    fxCtx.fill();
+  }
 }
 
 // ─── Render loop ──────────────────────────────────────────────────────────────
 let t = 0;
 const PI2 = Math.PI * 2;
-const IDLE_R = 5 * (Math.min(window.innerWidth, window.innerHeight) / 1080);
+const DOMAIN_R  = 0.178 * 0.6 * 0.5; // finger-frame domain corner radius (half of the previous 60%)
+// Small idle life: a tight float + a gentle size breathe. Both stay tiny on
+// purpose — the anchor itself is what keeps the silhouette intact, so any
+// added motion/size range here is a bonus wobble, not something that should
+// be able to pull a particle noticeably off its sampled spot.
+const FLOAT_R      = 5 * (Math.min(window.innerWidth, window.innerHeight) / 1080); // 5px wander radius
+const PULSE_AMOUNT = 0.18; // size breathes ±18% around its base radius
 const FRAME_MS = 1000 / 30; // 30fps cap
 let lastFrameTime = 0;
 
@@ -271,45 +481,49 @@ function animate(now) {
   if (frameRect) {
     clipRect = { ...frameRect };
     if (state === 'IDLE') {
+      state = 'INTRO'; introStart = now;
+    } else if (state === 'INTRO' && now - introStart >= INTRO_MS) {
       state = 'ARMING'; armStart = now;
-      hud.textContent = '프레임 인식 — 유지하세요…'; hud.className = '';
     } else if (state === 'ARMING' && now - armStart >= ARM_MS) {
-      state = 'ACTIVE'; hud.textContent = 'DEPTH PARTICLE MODE'; hud.className = 'on';
+      state = 'ACTIVE';
       buildTargets(frameRect); lastBuild = now;
     } else if (state === 'ACTIVE' && now - lastBuild >= REBUILD_MS) {
       buildTargets(frameRect); lastBuild = now;
     }
   } else {
-    if (state === 'ACTIVE' || state === 'ARMING') {
-      state = 'FADING'; hud.textContent = '양손으로 사각 프레임을 만들어보세요'; hud.className = '';
-      for (let i = 0; i < N_cur; i++) pta[i] = 0;
-    } else if (state === 'FADING') {
-      let done = true;
-      for (let i = 0; i < N_cur; i++) if (pa[i] > 0.005) { done = false; break; }
-      if (done) { state = 'IDLE'; clipRect = null; N_cur = 0; }
+    if (state !== 'IDLE') {
+      state = 'IDLE'; clipRect = null;
+      for (let i = 0; i < N_cur; i++) pta[i] = 0; // instant off, no fade-out ramp
     }
   }
 
-  updateGlass(frameRect, state === 'ARMING' || state === 'ACTIVE');
+  updateGlass(frameRect, state === 'ARMING' || state === 'ACTIVE', state === 'ARMING');
+  updateScreens(state);
+
+  // ── Attract loop (idle) ─────────────────────────────────────────────────────
+  if (state === 'IDLE') drawAttractRing(W, H);
 
   // ── Particles ─────────────────────────────────────────────────────────────
-  if (state !== 'IDLE' && N_cur > 0) {
+  if ((state === 'ARMING' || state === 'ACTIVE') && N_cur > 0) {
     blobCtx.clearRect(0, 0, W, H);
 
     for (let i = 0; i < N_cur; i++) {
-      // Fade in/out (faster out)
-      const fadeK = pta[i] === 0 ? 0.06 : 0.04;
-      pa[i] += (pta[i] - pa[i]) * fadeK;
-      if (pa[i] < 0.005) continue;
+      // No fade in or out — a particle is either fully opaque (pta === 1) or
+      // not drawn at all, with nothing gradual in between.
+      if (pta[i] !== 1) continue;
 
-      // Tiny idle motion around base position (~5px radius)
-      const idleSpd = 0.4 + (pno[i] % 1) * 0.3;
-      const cx = pbx[i] + Math.cos(t * idleSpd       + pno[i])  * IDLE_R;
-      const cy = pby[i] + Math.sin(t * idleSpd * 1.1 + pno2[i]) * IDLE_R;
+      // Each particle owns a fixed anchor (see the pool setup above) — a
+      // rebuild only toggles it on/off, it never relocates. That's what
+      // removes the flicker: there's no new target to jump to.
+      // On top of that fixed anchor: a tight float (±5px) and a slow size
+      // breathe, both small enough that the traced silhouette never suffers.
+      const cx = pbx[i] + Math.cos(t * 0.5 + pph[i])  * FLOAT_R;
+      const cy = pby[i] + Math.sin(t * 0.5 + pph2[i]) * FLOAT_R;
+      const r  = prad[i] * (1 + Math.sin(t * 0.35 + pph[i]) * PULSE_AMOUNT);
 
       blobCtx.beginPath();
-      blobCtx.arc(cx, cy, prad[i], 0, PI2);
-      blobCtx.fillStyle = `hsla(${ph[i]},${psat[i]}%,${plig[i]}%,${Math.min(1, pa[i])})`;
+      blobCtx.arc(cx, cy, r, 0, PI2);
+      blobCtx.fillStyle = `rgb(${pr[i]|0},${pg[i]|0},${pb[i]|0})`;
       blobCtx.fill();
     }
 
@@ -318,12 +532,10 @@ function animate(now) {
     if (clipRect) {
       const { x1, y1, x2, y2 } = clipRect;
       fxCtx.beginPath();
-      fxCtx.roundRect(x1, y1, x2-x1, y2-y1, Math.min(W, H) * 0.178);
+      fxCtx.roundRect(x1, y1, x2-x1, y2-y1, Math.min(W, H) * DOMAIN_R);
       fxCtx.clip();
     }
-    fxCtx.filter = 'blur(7px)';
     fxCtx.drawImage(blob, 0, 0);
-    fxCtx.filter = 'none';
     fxCtx.restore();
   }
 
@@ -332,44 +544,10 @@ function animate(now) {
     const { x1, y1, x2, y2 } = frameRect;
     const sy = y1 + (t * 40 % Math.max(1, y2 - y1));
     fxCtx.save();
-    fxCtx.beginPath(); fxCtx.roundRect(x1, y1, x2-x1, y2-y1, Math.min(W, H) * 0.178); fxCtx.clip();
+    fxCtx.beginPath(); fxCtx.roundRect(x1, y1, x2-x1, y2-y1, Math.min(W, H) * DOMAIN_R); fxCtx.clip();
     const g = fxCtx.createLinearGradient(0, sy-22, 0, sy+22);
     g.addColorStop(0, 'rgba(180,220,255,0)'); g.addColorStop(.5, 'rgba(180,220,255,0.07)'); g.addColorStop(1, 'rgba(180,220,255,0)');
     fxCtx.fillStyle = g; fxCtx.fillRect(x1, sy-22, x2-x1, 44);
-    fxCtx.restore();
-  }
-
-  // ── Arming ring ────────────────────────────────────────────────────────────
-  if (frameRect && state === 'ARMING') {
-    const cx = (frameRect.x1+frameRect.x2)/2, cy = (frameRect.y1+frameRect.y2)/2;
-    fxCtx.save();
-    fxCtx.strokeStyle = 'rgba(200,230,255,0.85)'; fxCtx.lineWidth = 2;
-    fxCtx.shadowColor = 'rgba(160,210,255,0.7)'; fxCtx.shadowBlur = 10;
-    fxCtx.beginPath();
-    fxCtx.arc(cx, cy, 26, -Math.PI/2, -Math.PI/2 + PI2 * ((now - armStart) / ARM_MS));
-    fxCtx.stroke();
-    fxCtx.restore();
-  }
-
-  // ── Silhouette debug preview (bottom-right) ────────────────────────────────
-  {
-    const pw = 192, ph2 = 108;
-    const px2 = W - pw - 16, py2 = H - ph2 - 16;
-    fxCtx.save();
-    fxCtx.globalAlpha = 0.9;
-    fxCtx.fillStyle = '#000';
-    fxCtx.fillRect(px2, py2, pw, ph2);
-    fxCtx.translate(px2 + pw, py2);
-    fxCtx.scale(-1, 1);
-    fxCtx.drawImage(sc, 0, 0, sc.width, sc.height, 0, 0, pw, ph2);
-    fxCtx.setTransform(1, 0, 0, 1, 0, 0);
-    fxCtx.globalAlpha = 1;
-    fxCtx.strokeStyle = 'rgba(255,255,255,0.3)';
-    fxCtx.lineWidth = 1;
-    fxCtx.strokeRect(px2, py2, pw, ph2);
-    fxCtx.fillStyle = 'rgba(255,255,255,0.3)';
-    fxCtx.font = '10px monospace';
-    fxCtx.fillText('SEG', px2 + 6, py2 + 14);
     fxCtx.restore();
   }
 
