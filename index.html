@@ -22,14 +22,20 @@
       --attract-lottie-w: 46vmin;
       --attract-guide-bottom: 4vmin;
       --ring-radius-ratio: 0.30;
+      /* Portrait/9:16 wireframe shows real whitespace between the dot-ring
+         square and the guide-text block below it (not touching, unlike the
+         landscape wireframe) — this reserves that extra breathing room. */
+      --attract-ring-gap: 3vmin;
       /* Height of the guide-text + hand-gesture block (2 text lines + gap +
-         lottie strip + its own bottom margin), derived from the vars above so
-         it always matches whatever either breakpoint sets them to. #attract
-         (dot ring + logo + tagline) is reserved everything ABOVE this band —
-         see #attract's `bottom` below — so the two blocks never overlap. */
+         lottie strip + its own bottom margin + the ring gap above it),
+         derived from the vars above so it always matches whatever either
+         breakpoint sets them to. #attract (dot ring + logo + tagline) is
+         reserved everything ABOVE this band — see #attract's `bottom` below
+         — so the two blocks never overlap. */
       --attract-guide-total-h: calc(
         (var(--attract-guide-text-size) * 1.55 * 2) + var(--attract-guide-gap) +
-        (var(--attract-lottie-w) * 843 / 2143) + var(--attract-guide-bottom)
+        (var(--attract-lottie-w) * 843 / 2143) + var(--attract-guide-bottom) +
+        var(--attract-ring-gap)
       );
     }
     @media (orientation: landscape) {
@@ -41,6 +47,9 @@
         --attract-lottie-w: 46vmin;
         --attract-guide-bottom: 4vmin;
         --ring-radius-ratio: 0.30;
+        /* Landscape wireframe has the guide block sitting right against the
+           ring square, so no extra gap here. */
+        --attract-ring-gap: 0vmin;
       }
     }
 
@@ -268,8 +277,9 @@ function resize() {
   const guideGap      = parseFloat(cs.getPropertyValue('--attract-guide-gap')) || 0;
   const lottieW       = parseFloat(cs.getPropertyValue('--attract-lottie-w')) || 0;
   const guideBottom   = parseFloat(cs.getPropertyValue('--attract-guide-bottom')) || 0;
+  const ringGap       = parseFloat(cs.getPropertyValue('--attract-ring-gap')) || 0;
   const lottieH = lottieW * 843 / 2143;
-  attractGuideReservedH = (guideTextSize * 1.55 * 2 + guideGap + lottieH + guideBottom) * vmin;
+  attractGuideReservedH = (guideTextSize * 1.55 * 2 + guideGap + lottieH + guideBottom + ringGap) * vmin;
 }
 window.addEventListener('resize', resize);
 resize();
