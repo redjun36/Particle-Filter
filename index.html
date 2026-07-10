@@ -15,17 +15,21 @@
        separate variable sets (not one shared vmin formula) so either can be
        retuned later without touching the other. */
     :root {
-      --attract-logo-w: 22vmin;
-      --attract-tag-size: 1.7vmin;
-      --attract-guide-gap: 2.2vmin;
-      --attract-guide-text-size: 1.6vmin;
-      --attract-lottie-w: 46vmin;
+      /* Sized against the 9:16 wireframe's own ratios (logo/slogan/hand-guide
+         measured relative to the ring square's width), not an arbitrary vmin
+         guess — components read much bigger there than our old values. */
+      --attract-logo-w: 50vmin;
+      --attract-tag-size: 3vmin;
+      --attract-guide-gap: 2.5vmin;
+      --attract-guide-text-size: 3vmin;
+      --attract-lottie-w: 78vmin;
       --attract-guide-bottom: 4vmin;
-      --ring-radius-ratio: 0.30;
-      /* Portrait/9:16 wireframe shows real whitespace between the dot-ring
-         square and the guide-text block below it (not touching, unlike the
-         landscape wireframe) — this reserves that extra breathing room. */
-      --attract-ring-gap: 3vmin;
+      --ring-radius-ratio: 0.36;
+      /* Small breathing room between the dot-ring square and the guide block
+         below it — kept modest now that the guide block itself (bigger text
+         + bigger hand-gesture strip) already reserves plenty of space, so
+         adding much more here just reads as a big empty gap. */
+      --attract-ring-gap: 1.5vmin;
       /* Height of the guide-text + hand-gesture block (2 text lines + gap +
          lottie strip + its own bottom margin + the ring gap above it),
          derived from the vars above so it always matches whatever either
