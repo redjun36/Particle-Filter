@@ -311,6 +311,25 @@ const PALETTE = [
   [166, 244, 214], // mint
 ];
 
+// Landing-screen dot ring only — a separate, more muted "Extended Palette 2"
+// sheet, deliberately kept apart from PALETTE above so the particle effect's
+// colors are untouched. Read visually off the reference slide (no pixel
+// picker available), so nudge any of these if they're off.
+const RING_PALETTE = [
+  [ 22,  65,  46], // deep forest green
+  [ 30, 122,  34], // every Love — medium green
+  [111, 163,  36], // every Wonder — olive/lime green
+  [173, 128,  20], // mustard gold
+  [194,  63,  26], // every Calm — burnt orange
+  [168,  30,  30], // deep brick red
+  [ 43, 147, 172], // teal
+  [ 36, 105, 163], // medium blue
+  [ 26,  27, 108], // dark indigo navy
+  [ 74,  29, 128], // violet
+  [168,  31, 132], // every Bloom — magenta
+  [108,  31,  58], // dark wine maroon
+];
+
 function pickColor() {
   const [r, g, b] = PALETTE[(Math.random() * PALETTE.length) | 0];
   const jitter = () => (Math.random() - 0.5) * 16;
@@ -537,14 +556,14 @@ function updateScreens(state) {
   guideEl.style.display     = state === 'ARMING' ? 'flex' : 'none';
 }
 
-// Attract-loop ring: same 12 brand colors as the particle palette, laid out in
-// a slowly rotating circle. Per-dot placement/size jitter is rolled once so
-// the ring reads as organic rather than a perfectly even polygon; only the
-// ring's overall radius "breathes" in and out — the dots themselves never
-// change size, per the brief.
-const ringJitterR = PALETTE.map(() => 0.85 + Math.random() * 0.3);
-const ringJitterA = PALETTE.map(() => (Math.random() - 0.5) * 0.15);
-const ringDotScale = PALETTE.map(() => 0.7 + Math.random() * 0.6);
+// Attract-loop ring: uses RING_PALETTE (its own muted 12-color set — see
+// above), not the particle palette, laid out in a slowly rotating circle.
+// Per-dot placement/size jitter is rolled once so the ring reads as organic
+// rather than a perfectly even polygon; only the ring's overall radius
+// "breathes" in and out — the dots themselves never change size, per the brief.
+const ringJitterR = RING_PALETTE.map(() => 0.85 + Math.random() * 0.3);
+const ringJitterA = RING_PALETTE.map(() => (Math.random() - 0.5) * 0.15);
+const ringDotScale = RING_PALETTE.map(() => 0.7 + Math.random() * 0.6);
 const RING_ROTATE_S  = 25; // seconds per full rotation — slow, ambient
 const RING_BREATHE_S = 7;  // seconds per breathe cycle
 
@@ -558,12 +577,12 @@ function drawAttractRing(W, H) {
   const breathe = 1 + Math.sin((t / RING_BREATHE_S) * PI2) * 0.12;
   const rot = (t / RING_ROTATE_S) * PI2;
   const dotR = Math.min(W, availH) * 0.014;
-  for (let i = 0; i < PALETTE.length; i++) {
-    const a = rot + (i / PALETTE.length) * PI2 + ringJitterA[i];
+  for (let i = 0; i < RING_PALETTE.length; i++) {
+    const a = rot + (i / RING_PALETTE.length) * PI2 + ringJitterA[i];
     const R = baseR * breathe * ringJitterR[i];
     const x = cx + Math.cos(a) * R;
     const y = cy + Math.sin(a) * R;
-    const [r, g, b] = PALETTE[i];
+    const [r, g, b] = RING_PALETTE[i];
     fxCtx.beginPath();
     fxCtx.arc(x, y, dotR * ringDotScale[i], 0, PI2);
     fxCtx.fillStyle = `rgb(${r},${g},${b})`;
