@@ -9,6 +9,41 @@
     body { background: #000; overflow: hidden; font-family: 'Courier New', monospace; }
     canvas { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; }
 
+    /* ─── Two explicit per-display layouts ─────────────────────────────────
+       Portrait (default below) targets the 9:16 vertical monitor/mobile
+       case; landscape overrides it for the 16:9 general-web case. Kept as
+       separate variable sets (not one shared vmin formula) so either can be
+       retuned later without touching the other. */
+    :root {
+      --attract-logo-w: 22vmin;
+      --attract-tag-size: 1.7vmin;
+      --attract-guide-gap: 2.2vmin;
+      --attract-guide-text-size: 1.6vmin;
+      --attract-lottie-w: 46vmin;
+      --attract-guide-bottom: 4vmin;
+      --ring-radius-ratio: 0.30;
+      /* Height of the guide-text + hand-gesture block (2 text lines + gap +
+         lottie strip + its own bottom margin), derived from the vars above so
+         it always matches whatever either breakpoint sets them to. #attract
+         (dot ring + logo + tagline) is reserved everything ABOVE this band —
+         see #attract's `bottom` below — so the two blocks never overlap. */
+      --attract-guide-total-h: calc(
+        (var(--attract-guide-text-size) * 1.55 * 2) + var(--attract-guide-gap) +
+        (var(--attract-lottie-w) * 843 / 2143) + var(--attract-guide-bottom)
+      );
+    }
+    @media (orientation: landscape) {
+      :root {
+        --attract-logo-w: 22vmin;
+        --attract-tag-size: 1.7vmin;
+        --attract-guide-gap: 2.2vmin;
+        --attract-guide-text-size: 1.6vmin;
+        --attract-lottie-w: 46vmin;
+        --attract-guide-bottom: 4vmin;
+        --ring-radius-ratio: 0.30;
+      }
+    }
+
     #glass {
       position: fixed; display: none; pointer-events: none;
       border-radius: 5.4vmin;
@@ -40,23 +75,33 @@
     /* ─── Attract (idle/loop) screen ──────────────────────────────────────── */
     #attractBg { position: fixed; inset: 0; background: #000; z-index: 2; display: none; }
     #attract {
-      position: fixed; inset: 0; z-index: 5; display: none;
+      position: fixed; top: 0; left: 0; right: 0; bottom: var(--attract-guide-total-h);
+      z-index: 5; display: none;
       flex-direction: column; align-items: center; justify-content: center;
       pointer-events: none;
     }
-    #attractLogo { width: 22vmin; margin-bottom: 2.2vmin; }
+    #attractLogo { width: var(--attract-logo-w); margin-bottom: 2.2vmin; }
     #attractLogo svg { width: 100%; height: auto; display: block; filter: invert(1); }
     #attractTag {
-      color: rgba(255,255,255,0.55); font-size: 1.7vmin; letter-spacing: 0.04em;
+      color: rgba(255,255,255,0.55); font-size: var(--attract-tag-size); letter-spacing: 0.04em;
       font-family: -apple-system, 'Malgun Gothic', sans-serif;
     }
 
     /* ─── Attract-screen hand-gesture guide — landing only, never shown once ──
        the person is actually in the live view (see updateScreens). ─────────── */
+    #attractGuide {
+      position: fixed; left: 50%; bottom: var(--attract-guide-bottom); transform: translateX(-50%);
+      z-index: 5; display: none; flex-direction: column; align-items: center;
+      gap: var(--attract-guide-gap);
+      pointer-events: none;
+    }
+    #attractGuideText {
+      color: #fff; font-size: var(--attract-guide-text-size); line-height: 1.55; text-align: center;
+      font-family: -apple-system, 'Malgun Gothic', sans-serif;
+    }
     #attractLottie {
-      position: fixed; left: 50%; bottom: 4vmin; transform: translateX(-50%);
-      width: 46vmin; height: calc(46vmin * 843 / 2143);
-      z-index: 5; display: none; pointer-events: none;
+      width: var(--attract-lottie-w); height: calc(var(--attract-lottie-w) * 843 / 2143);
+      pointer-events: none;
     }
 
     /* ─── Persistent top logo + light band (arming/active) ───────────────── */
@@ -100,7 +145,10 @@
   <div id="attractTag">Open your eyes and gaze.</div>
 </div>
 
-<div id="attractLottie"></div>
+<div id="attractGuide">
+  <div id="attractGuideText">핸드 제스쳐를 취하고,<br>every else의 시선을 체험해보세요</div>
+  <div id="attractLottie"></div>
+</div>
 
 <div id="topLogo"></div>
 
@@ -134,8 +182,9 @@ const glassEl    = document.getElementById('glass');
 const camErrorEl = document.getElementById('camError');
 
 // ─── Exhibition screens ───────────────────────────────────────────────────────
-const attractBgEl    = document.getElementById('attractBg');
-const attractEl      = document.getElementById('attract');
+const attractBgEl     = document.getElementById('attractBg');
+const attractEl       = document.getElementById('attract');
+const attractGuideEl  = document.getElementById('attractGuide');
 const attractLottieEl = document.getElementById('attractLottie');
 const topBandEl      = document.getElementById('topBand');
 const topLogoEl      = document.getElementById('topLogo');
@@ -197,9 +246,30 @@ attractLottieAnim.play();
 const blob    = document.createElement('canvas');
 const blobCtx = blob.getContext('2d');
 
+// Read from the CSS custom property so the ring stays driven by the same
+// per-orientation (16:9 web / 9:16 vertical) layout split as the rest of the
+// attract screen, instead of a separate hardcoded value.
+let ringRadiusRatio = 0.30;
+// How much vertical space (in px) the guide-text + hand-gesture band reserves
+// at the bottom of the screen — mirrors the `--attract-guide-total-h` calc()
+// in CSS so the ring (drawn on canvas, not laid out by CSS) centers itself in
+// the same reduced area #attract is constrained to, instead of full-screen
+// center, which is what let the ring's dots drift down into the guide band.
+let attractGuideReservedH = 0;
 function resize() {
   const W = window.innerWidth, H = window.innerHeight;
   [feedCanvas, fxCanvas, blob].forEach(c => { c.width = W; c.height = H; });
+  const cs = getComputedStyle(document.documentElement);
+  const parsed = parseFloat(cs.getPropertyValue('--ring-radius-ratio'));
+  if (!isNaN(parsed)) ringRadiusRatio = parsed;
+
+  const vmin = Math.min(W, H) / 100;
+  const guideTextSize = parseFloat(cs.getPropertyValue('--attract-guide-text-size')) || 0;
+  const guideGap      = parseFloat(cs.getPropertyValue('--attract-guide-gap')) || 0;
+  const lottieW       = parseFloat(cs.getPropertyValue('--attract-lottie-w')) || 0;
+  const guideBottom   = parseFloat(cs.getPropertyValue('--attract-guide-bottom')) || 0;
+  const lottieH = lottieW * 843 / 2143;
+  attractGuideReservedH = (guideTextSize * 1.55 * 2 + guideGap + lottieH + guideBottom) * vmin;
 }
 window.addEventListener('resize', resize);
 resize();
@@ -434,9 +504,9 @@ function updateGlass(rect, on, arming) {
 // or is inside the experience — attract is a stylized, camera-free screen.
 let attractLottiePlaying = true; // matches the immediate .play() call above
 function updateScreens(state) {
-  attractBgEl.style.display     = state === 'IDLE'  ? 'block' : 'none';
-  attractEl.style.display       = state === 'IDLE'  ? 'flex'  : 'none';
-  attractLottieEl.style.display = state === 'IDLE'  ? 'block' : 'none';
+  attractBgEl.style.display    = state === 'IDLE'  ? 'block' : 'none';
+  attractEl.style.display      = state === 'IDLE'  ? 'flex'  : 'none';
+  attractGuideEl.style.display = state === 'IDLE'  ? 'flex'  : 'none';
   if (state === 'IDLE' && !attractLottiePlaying) { attractLottieAnim.play();  attractLottiePlaying = true;  }
   if (state !== 'IDLE' && attractLottiePlaying)  { attractLottieAnim.pause(); attractLottiePlaying = false; }
   const live = state === 'ARMING' || state === 'ACTIVE';
@@ -458,11 +528,15 @@ const RING_ROTATE_S  = 25; // seconds per full rotation — slow, ambient
 const RING_BREATHE_S = 7;  // seconds per breathe cycle
 
 function drawAttractRing(W, H) {
-  const cx = W / 2, cy = H / 2;
-  const baseR = Math.min(W, H) * 0.30;
+  // Center/size the ring within the space ABOVE the guide-text + hand-gesture
+  // band (see attractGuideReservedH), not the full viewport — otherwise the
+  // ring's dots can extend down into that band and overlap it.
+  const availH = Math.max(H - attractGuideReservedH, H * 0.4);
+  const cx = W / 2, cy = availH / 2;
+  const baseR = Math.min(W, availH) * ringRadiusRatio;
   const breathe = 1 + Math.sin((t / RING_BREATHE_S) * PI2) * 0.12;
   const rot = (t / RING_ROTATE_S) * PI2;
-  const dotR = Math.min(W, H) * 0.014;
+  const dotR = Math.min(W, availH) * 0.014;
   for (let i = 0; i < PALETTE.length; i++) {
     const a = rot + (i / PALETTE.length) * PI2 + ringJitterA[i];
     const R = baseR * breathe * ringJitterR[i];
