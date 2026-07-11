@@ -342,11 +342,12 @@ function pickColor() {
 
 // ─── Particle pool — fixed slots ──────────────────────────────────────────────
 // Each particle index owns a permanent anchor point (in `sc` mask-space),
-// assigned once below and never reassigned. A rebuild only turns a slot's
-// alpha on/off depending on whether its anchor currently falls inside the
-// silhouette+domain — it never moves the anchor. That's what makes "no more
-// flicker" possible: there's nothing to interpolate between, because a given
-// particle never has a new target to jump to in the first place.
+// assigned once below and never reassigned — a rebuild only tests whether
+// that anchor currently falls inside the silhouette+domain. What's no longer
+// instant is the *visible* position (pdx/pdy): a newly-activated anchor can
+// glide in from a same-rebuild neighbor's vacated spot instead of popping
+// straight in, so a moving silhouette edge reads as dots sliding rather than
+// flickering off/on (see buildTargets + the glide step in animate()).
 const N_MAX = 3000; // denser fill — less gap, still shows real background through
 let   N_cur = 0; // currently active particle count
 
@@ -361,10 +362,23 @@ const psy  = new Float32Array(N_MAX);
 // actually moved. A fixed threshold makes an anchor's on/off state track the
 // silhouette only, not a fresh coin flip.
 const pluck = new Float32Array(N_MAX);
+// Per-anchor smoothed mask alpha — an EMA of the raw per-frame alpha reading,
+// so a single noisy/jittery frame (camera sensor noise, segmentation model
+// wobble) can't flip an anchor by itself; see buildTargets for how this and
+// the ON/OFF hysteresis gap combine to ignore sub-threshold jitter while
+// still tracking real movement.
+const pAlphaSmooth = new Float32Array(N_MAX);
 // Base positions — the anchor projected into screen space (recomputed each
 // build so a window resize keeps particles correctly placed)
 const pbx  = new Float32Array(N_MAX);
 const pby  = new Float32Array(N_MAX);
+// Current glide (draw) position — where the particle is actually rendered
+// this frame. Normally chases pbx/pby every frame (see animate()). When an
+// anchor newly activates, buildTargets seeds this from a just-deactivated
+// neighbor's last glide position instead of the anchor's own home spot, so
+// the dot appears to slide in from there rather than popping into place.
+const pdx = new Float32Array(N_MAX);
+const pdy = new Float32Array(N_MAX);
 // Per-particle phase for the small idle float + size pulse (see render loop)
 const pph  = new Float32Array(N_MAX);
 const pph2 = new Float32Array(N_MAX);
@@ -426,9 +440,26 @@ let clipRect   = null;
 let armStart   = 0;
 let lastBuild  = 0;
 let segReady   = false;
-const ARM_MS = 600, REBUILD_MS = 200;
+const ARM_MS = 600, REBUILD_MS = 110;
+// Mask-alpha smoothing + hysteresis — damps the flicker that came from
+// re-testing the silhouette every rebuild and picking up small camera/model
+// noise as if it were real movement. ALPHA_SMOOTH is the EMA weight given to
+// each new sample (lower = more damping, more lag). ON/OFF are two different
+// thresholds instead of one: an anchor needs a stronger reading to turn on
+// than to stay on, so a smoothed value hovering right at the boundary can't
+// chatter — only a genuine, sustained shift crosses the gap between them.
+const ALPHA_SMOOTH = 0.4;
+const ALPHA_ON  = 46;
+const ALPHA_OFF = 34;
 
 // ─── Build targets — tests each fixed anchor against the current silhouette ──
+// Anchors still never move (see the pool setup above) — what's new is that a
+// newly-activating anchor doesn't necessarily *draw* at its own home spot on
+// its very first visible frame. If a nearby anchor just deactivated this same
+// rebuild, the new one borrows that anchor's last on-screen position as its
+// start point and glides home over the next few frames (see animate()),
+// instead of popping straight into place. That's what reads as "the dot
+// slid over" rather than "one dot vanished, a different one appeared."
 function buildTargets(rect) {
   if (!segReady) return;
   const SW = sc.width, SH = sc.height;
@@ -439,6 +470,10 @@ function buildTargets(rect) {
   const d = imgData.data;
   const scale = Math.min(W, H) / 1080;
 
+  const turnedOn = [];
+  const vacatedX = [];
+  const vacatedY = [];
+
   for (let i = 0; i < N_cur; i++) {
     const sx = psx[i] | 0, sy = psy[i] | 0;
     const idx = (sy * SW + sx) * 4;
@@ -448,30 +483,64 @@ function buildTargets(rect) {
     pbx[i] = scrX;
     pby[i] = scrY;
 
-    if (d[idx + 3] < 40 || scrX < rect.x1 || scrX > rect.x2 || scrY < rect.y1 || scrY > rect.y2) {
-      pta[i] = 0; // instant off, no fade-out ramp
-      continue;
+    const wasOn = pta[i] === 1;
+    let nowOn = false;
+
+    pAlphaSmooth[i] += (d[idx + 3] - pAlphaSmooth[i]) * ALPHA_SMOOTH;
+    const alphaOk = wasOn ? pAlphaSmooth[i] >= ALPHA_OFF : pAlphaSmooth[i] >= ALPHA_ON;
+
+    if (alphaOk && scrX >= rect.x1 && scrX <= rect.x2 && scrY >= rect.y1 && scrY <= rect.y2) {
+      const lum     = 0.299*d[idx] + 0.587*d[idx+1] + 0.114*d[idx+2];
+      const density = 32 + (lum / 255) * 68; // 32(dark) ~ 100(bright)
+      // Bright anchors more likely than dark, but dark regions (hair/dark
+      // clothing) still get enough coverage to stay legible. Uses this
+      // anchor's fixed pluck value, not a fresh roll, so the on/off state
+      // only changes when the silhouette under it actually changes.
+      nowOn = pluck[i] <= density;
     }
 
-    const lum     = 0.299*d[idx] + 0.587*d[idx+1] + 0.114*d[idx+2];
-    const density = 32 + (lum / 255) * 68; // 32(dark) ~ 100(bright)
-    // Bright anchors more likely than dark, but dark regions (hair/dark
-    // clothing) still get enough coverage to stay legible. Uses this anchor's
-    // fixed pluck value, not a fresh roll, so the on/off state only changes
-    // when the silhouette under it actually changes.
-    if (pluck[i] > density) { pta[i] = 0; continue; }
-
-    if (pta[i] !== 1) {
+    if (nowOn && !wasOn) {
       // Only re-roll color/size when the slot is newly activating — keeps a
       // continuously-visible particle's look stable instead of relabeling it
-      // every 200ms.
+      // every rebuild.
       const col = pickColor();
       pr[i] = col.r; pg[i] = col.g; pb[i] = col.b;
-      // Same base size as before, scaled up by a random 1x~2.5x factor so
-      // particle size varies noticeably.
-      prad[i] = (6 + Math.random() * 14) * scale * (1 + Math.random() * 1.5);
+      // Base size 6~25, scaled up by a random 1x~2.5x factor so particle
+      // size varies noticeably.
+      prad[i] = (6 + Math.random() * 19) * scale * (1 + Math.random() * 1.5);
+      turnedOn.push(i);
+    } else if (!nowOn && wasOn) {
+      vacatedX.push(pdx[i]);
+      vacatedY.push(pdy[i]);
     }
-    pta[i] = 1; // fully opaque so overlapping particles fully occlude, not blend, and instant — no fade-in ramp
+
+    pta[i] = nowOn ? 1 : 0; // still instant on/off — no opacity fade either way
+  }
+
+  // Match each newly-on anchor to the nearest vacated spot from *this same*
+  // rebuild (if one's close enough) so it starts its glide from there. Left
+  // unmatched — no nearby vacancy, e.g. the silhouette growing into new
+  // territory — it just starts at its own home position, same as before.
+  const maxMatchDist = 60 * scale;
+  const maxMatchDistSq = maxMatchDist * maxMatchDist;
+  const used = new Array(vacatedX.length).fill(false);
+  for (let n = 0; n < turnedOn.length; n++) {
+    const i = turnedOn[n];
+    let best = -1, bestDistSq = maxMatchDistSq;
+    for (let k = 0; k < vacatedX.length; k++) {
+      if (used[k]) continue;
+      const dx = vacatedX[k] - pbx[i], dy = vacatedY[k] - pby[i];
+      const distSq = dx*dx + dy*dy;
+      if (distSq < bestDistSq) { bestDistSq = distSq; best = k; }
+    }
+    if (best !== -1) {
+      used[best] = true;
+      pdx[i] = vacatedX[best];
+      pdy[i] = vacatedY[best];
+    } else {
+      pdx[i] = pbx[i];
+      pdy[i] = pby[i];
+    }
   }
 }
 
@@ -600,7 +669,12 @@ const DOMAIN_R  = 0.178 * 0.6 * 0.5; // finger-frame domain corner radius (half 
 // be able to pull a particle noticeably off its sampled spot.
 const FLOAT_R      = 5 * (Math.min(window.innerWidth, window.innerHeight) / 1080); // 5px wander radius
 const PULSE_AMOUNT = 0.18; // size breathes ±18% around its base radius
-const FRAME_MS = 1000 / 30; // 30fps cap
+// How fast a glided-in particle (see buildTargets) eases from its borrowed
+// start position to its own anchor's home position each frame — an
+// exponential ease, not a fixed-duration tween, so it stays smooth even if
+// a rebuild reassigns it again before it fully arrives.
+const GLIDE_RATE = 0.16;
+const FRAME_MS = 1000 / 60; // 60fps cap — was 30, smoother continuous motion on 60Hz+ displays
 let lastFrameTime = 0;
 
 function animate(now) {
@@ -644,13 +718,20 @@ function animate(now) {
       // not drawn at all, with nothing gradual in between.
       if (pta[i] !== 1) continue;
 
-      // Each particle owns a fixed anchor (see the pool setup above) — a
-      // rebuild only toggles it on/off, it never relocates. That's what
-      // removes the flicker: there's no new target to jump to.
-      // On top of that fixed anchor: a tight float (±5px) and a slow size
-      // breathe, both small enough that the traced silhouette never suffers.
-      const cx = pbx[i] + Math.cos(t * 0.5 + pph[i])  * FLOAT_R;
-      const cy = pby[i] + Math.sin(t * 0.5 + pph2[i]) * FLOAT_R;
+      // Each particle owns a fixed anchor (see the pool setup above) and a
+      // rebuild still only toggles it on/off — the anchor itself never
+      // relocates. What can move is pdx/pdy, its current glide position: it
+      // eases toward the anchor's home spot (pbx/pby) every frame, and
+      // starts from a borrowed nearby position instead of home when the
+      // anchor just activated (see buildTargets), so a shifting silhouette
+      // edge reads as dots sliding over rather than popping on/off.
+      pdx[i] += (pbx[i] - pdx[i]) * GLIDE_RATE;
+      pdy[i] += (pby[i] - pdy[i]) * GLIDE_RATE;
+
+      // On top of that: a tight float (±5px) and a slow size breathe, both
+      // small enough that the traced silhouette never suffers.
+      const cx = pdx[i] + Math.cos(t * 0.5 + pph[i])  * FLOAT_R;
+      const cy = pdy[i] + Math.sin(t * 0.5 + pph2[i]) * FLOAT_R;
       const r  = prad[i] * (1 + Math.sin(t * 0.35 + pph[i]) * PULSE_AMOUNT);
 
       blobCtx.beginPath();
