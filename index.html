@@ -555,23 +555,44 @@ function buildTargets(rect) {
   }
 }
 
+// ─── Cover-fit crop ───────────────────────────────────────────────────────────
+// The webcam's native frame (usually a fixed 16:9-ish landscape sensor
+// resolution) rarely matches the display's aspect ratio — the exhibition TV
+// is a 9:16 vertical panel. Stretching the frame to fill the canvas squashes
+// the image non-uniformly, so instead we crop a centered window out of the
+// source that matches the destination's aspect ratio (same idea as CSS
+// `object-fit: cover`) and scale that window up to fill the canvas evenly.
+// This inherently narrows the field of view on a portrait display (there's no
+// way to show a landscape sensor's full width on a much narrower screen
+// without cropping something) but keeps people's proportions correct.
+function coverRect(srcW, srcH, dstW, dstH) {
+  const scale = Math.max(dstW / srcW, dstH / srcH);
+  const sw = dstW / scale, sh = dstH / scale;
+  return { sx: (srcW - sw) / 2, sy: (srcH - sh) / 2, sw, sh };
+}
+
 // ─── Segmentation ─────────────────────────────────────────────────────────────
 const selfie = new SelfieSegmentation({
   locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${f}`
 });
 selfie.setOptions({ modelSelection: 1 });
 selfie.onResults(res => {
+  const srcW = res.image.videoWidth || res.image.width;
+  const srcH = res.image.videoHeight || res.image.height;
+
   const W = feedCanvas.width, H = feedCanvas.height;
+  const feedCrop = coverRect(srcW, srcH, W, H);
   feedCtx.save();
   feedCtx.translate(W, 0); feedCtx.scale(-1, 1);
-  feedCtx.drawImage(res.image, 0, 0, W, H);
+  feedCtx.drawImage(res.image, feedCrop.sx, feedCrop.sy, feedCrop.sw, feedCrop.sh, 0, 0, W, H);
   feedCtx.restore();
 
   const SW = sc.width, SH = sc.height;
+  const maskCrop = coverRect(srcW, srcH, SW, SH);
   scCtx.clearRect(0, 0, SW, SH);
-  scCtx.drawImage(res.image, 0, 0, SW, SH);
+  scCtx.drawImage(res.image, maskCrop.sx, maskCrop.sy, maskCrop.sw, maskCrop.sh, 0, 0, SW, SH);
   scCtx.globalCompositeOperation = 'destination-in';
-  scCtx.drawImage(res.segmentationMask, 0, 0, SW, SH);
+  scCtx.drawImage(res.segmentationMask, maskCrop.sx, maskCrop.sy, maskCrop.sw, maskCrop.sh, 0, 0, SW, SH);
   scCtx.globalCompositeOperation = 'source-over';
   segReady = true;
 });
@@ -586,8 +607,18 @@ hands.onResults(res => {
   const W = fxCanvas.width, H = fxCanvas.height;
   if (!mhl || mhl.length < 2 || !mhl.every(lm => indexUp(lm))) { frameRect = null; return; }
 
-  const xVals = mhl.map(lm => (1 - lm[8].x) * W);
-  const yVals = []; mhl.forEach(lm => { yVals.push(lm[8].y*H, lm[4].y*H); });
+  // Landmarks are normalized [0,1] over the FULL uncropped source frame, so
+  // they need the same cover-crop remap as the visible feed above — otherwise
+  // the finger-frame rectangle drifts away from where the hands actually
+  // appear on the (now cropped) live view.
+  const srcW = res.image.videoWidth || res.image.width;
+  const srcH = res.image.videoHeight || res.image.height;
+  const crop = coverRect(srcW, srcH, W, H);
+  const mapX = nx => (1 - (nx * srcW - crop.sx) / crop.sw) * W;
+  const mapY = ny => ((ny * srcH - crop.sy) / crop.sh) * H;
+
+  const xVals = mhl.map(lm => mapX(lm[8].x));
+  const yVals = []; mhl.forEach(lm => { yVals.push(mapY(lm[8].y), mapY(lm[4].y)); });
 
   const x1 = Math.min(...xVals), x2 = Math.max(...xVals);
   const y1 = Math.min(...yVals), y2 = Math.max(...yVals);
