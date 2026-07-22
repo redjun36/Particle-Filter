@@ -75,6 +75,25 @@ on/off 판정에 쓰이는 밝기 기반 확률(`pluck`)도 **앵커당 한 번�
 9:16 세로 / 16:9 가로 레이아웃은 로고·태그라인·안내문구·손제스처 폭·링 반지름을 각각
 별도 변수 세트로 분리 튜닝 (와이어프레임 기준, 커밋 `de9f68e`/`543db91`).
 
+## 안내 문구 — 커스텀 폰트 SVG (커밋 `38939e8`)
+
+`"Open your eyes and gaze."` (영문 태그라인)과 `"핸드 제스쳐를 취하고, every else의
+시선을 체험해보세요"` (한글 안내문) 둘 다 더 이상 일반 텍스트가 아닙니다. 브랜드 폰트로
+export된 SVG 경로 윤곽선(`TAG_SVG`, `GUIDE_TEXT_SVG` 상수)을 `LOGO_SVG`와 똑같은 방식
+(`.innerHTML = ...`)으로 주입합니다 — 뷰어 기기에 폰트가 설치돼 있지 않아도 항상 정확한
+브랜드 서체로 렌더링되게 하기 위함. CSS도 `font-size` 기반(`--attract-tag-size`,
+`--attract-guide-text-size`)에서 `width` 기반(`--attract-tag-w`, `--attract-guide-text-w`,
+vmin 단위)으로 바뀌었음 — 이미 `#guideIcon`이 쓰던 것과 같은 패턴(`width: N; svg{width:100%;
+height:auto}`).
+
+`GUIDE_TEXT_SVG`는 동일 문구가 쓰이는 두 곳(대기화면의 큰 `#attractGuideText`, ARMING
+리마인더의 작은 `#guideText`)에 그대로 재사용됨 — 상수 하나, width만 다르게.
+
+**⚠️ 문구를 바꾸려면**: 이제 문자열을 고치는 게 아니라, 같은 브랜드 폰트로 새로 SVG를
+export해서 `TAG_SVG`/`GUIDE_TEXT_SVG` 상수 전체를 교체해야 합니다. viewBox 비율이 바뀌면
+`index.html` 안의 `64 / 343`(가로 텍스트 높이 계산, CSS `--attract-guide-total-h`와
+`resize()` 함수 둘 다에 있음) 같은 하드코딩된 종횡비도 같이 갱신해야 함.
+
 ## 겪었던 문제들 (다시 반복하지 않기 위한 기록)
 
 1. **매 리빌드 랜덤 재배치 → 뭉개짐**: 후보 픽셀을 매번 새로 스캔+shuffle+stride 샘플링하던
