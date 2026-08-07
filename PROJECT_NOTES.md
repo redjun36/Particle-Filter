@@ -20,27 +20,82 @@
 가능해짐. `index.html` 하나로 완결된 단일 파일 (MediaPipe Hands만 사용 — SelfieSegmentation은
 더 이상 안 씀).
 
+**2026-08-08부터: 라이브 카메라가 전체화면이 아니라 프레임 안에 있음.** 자세한 건 아래
+"카메라/트레일 뷰 — 900:1350 프레임" 섹션 참고.
+
 ## 상태 머신 (현재 흐름)
 
 ```
 IDLE (대기 루프) → ARMING (포인팅 제스처 유지, 0.6초) → DRAWING (손가락 궤적을 따라 파티클 생성)
   → CAPTURING (열린 손→주먹 제스처, 합성/업로드 중) → QR_DISPLAY (40초 카운트다운) → IDLE
 ```
-- `IDLE`: 검은 배경 + 도트 링 + Lottie 손 제스처 안내. **⚠️ 이 안내 그래픽(Lottie +
-  `guide`의 `HAND_ICON_SVG`)은 아직 예전 "두 손으로 프레임 만들기" 제스처를 보여줌 — 새
-  제스처(포인팅/주먹/스와이프)로 안 바뀌어 있음. 코드 주석에 "user is swapping in new
-  pointing/capture motion graphics themselves later"라고 명시돼 있어서 다른 세션에서 직접
-  교체할 예정으로 보임 — 확인 없이 임의로 바꾸지 말 것.**
-- `ARMING`: 검지만 편 "포인팅" 자세가 `ARM_MS`(600ms) 유지되면 진입. 라이브 카메라 + 로고 +
-  `guide` 리마인더(여전히 구버전 아이콘, 위 참고)
+- `IDLE`: 검은 배경 + 도트 링 + `guide-animation.webm`(포인팅→주먹 제스처 안내 영상) +
+  `ATTRACT_GUIDE_TEXT_SVG` 안내 텍스트. **Lottie는 2026-07-30에 완전히 제거됨** — lottie-web
+  CDN 스크립트, 임베디드 JSON(수백KB) 다 삭제하고 이 webm 클립으로 교체(구 두 손 프레임 제스처
+  → 새 포인팅/주먹 제스처로 내용도 같이 바뀜)
+- `ARMING`: 검지만 편 "포인팅" 자세가 `ARM_MS`(600ms) 유지되면 진입. 프레임 카메라 + 프레임
+  하단 로고(`#frameLogo`) + 프레임 **아래**(검은 배경 위) `#guide` 리마인더 — 같은
+  `guide-animation.webm`을 자연색 그대로 표시(카메라 위 블렌드 얹기는 폐기됨, 아래 참고) +
+  "손을 펼쳤다가 쥐면 캡처됩니다" 텍스트. **ARMING에서만 보이고 DRAWING 시작하면 사라짐**
+  (트레일 자체가 피드백이 되므로) — 옛 `HAND_ICON_SVG`/`GUIDE_TEXT_SVG`(두 손 프레임 아이콘+
+  문구)는 이때 같이 제거됨
 - `DRAWING`: 포인팅 상태를 유지한 채 손가락을 움직이면 그 궤적을 따라 파티클 트레일이 그려짐.
   `DRAWING_TIMEOUT_MS`(6초) 동안 포인팅이 감지 안 되면 트레일을 지우고 IDLE로 복귀(방치된
   세션 정리)
 - `CAPTURING`: "손을 폈다가(open) 일정 시간 안에 주먹을 쥐면" 캡처 트리거 (아래 제스처 판정
   참고). `capturingText`("이미지 준비 중...") 오버레이가 잠깐 뜨고, `startCapture()`가 비동기로
-  합성→JPEG 인코딩→Supabase 업로드→QR 생성을 마치면 `QR_DISPLAY`로 전환
-- `QR_DISPLAY`: 캡처한 썸네일 + QR코드 + 카운트다운(40초) 표시. 시간 다 되면 트레일 지우고
-  IDLE로 복귀
+  합성(`compositeCapture()`, 아래 참고)→PNG 인코딩→Supabase 업로드→QR 생성을 마치면
+  `QR_DISPLAY`로 전환
+- `QR_DISPLAY`: 캡처한 썸네일 + QR코드 + `QR_INSTRUCTION_SVG` 안내 + 카운트다운(40초) +
+  `RETURN_INSTRUCTION_SVG`(복귀 안내) 표시. **40초가 다 되거나, DRAWING의 캡처 트리거와 동일한
+  "편 손→주먹" 제스처를 다시 하면 즉시** 트레일 지우고 IDLE로 복귀. 이 화면 진입 시
+  "최근에 편 손이었음" 상태(`openSeenAt`)를 무효화해서, 캡처를 트리거한 바로 그 주먹이 놓이기도
+  전에 복귀 제스처로 오인식되는 걸 막음
+
+## 카메라/트레일 뷰 — 900:1350 프레임 (2026-08-08)
+
+라이브 카메라(`#feed`)+트레일(`#fx`)이 더 이상 전체화면이 아니라, 화면 위쪽에 고정된
+900:1350(2:3) 비율의 알약 모양 프레임 안에서만 보임 — 디자인 목업 기준으로 이렇게 바뀜.
+
+- **캔버스 분리가 핵심**: 대기화면 도트 링은 `drawAttractRing()`이 그리던 걸 전용
+  `#ring` 캔버스(항상 전체화면)로 옮기고, `#feed`/`#fx`는 이제 **항상** 900:1350 프레임
+  크기로 고정됨(상태에 따라 크기가 바뀌지 않음 — 예전엔 이 둘을 공유해서 링/트레일을
+  번갈아 그렸는데, 프레임 크기를 캔버스 자체에 적용하면서 공유가 불가능해짐)
+- **CSS 변수**: `--frame-w`(현재 63vmin — 원래 60 → 1.5배(90) → 70%(63)로 튜닝됨),
+  `--frame-h: calc(var(--frame-w) * 3 / 2)`. `border-radius: 100vmin`(어느 한쪽 절반보다
+  항상 큰 값)을 주면 CSS 스펙상 자동으로 완전한 알약 모양으로 클램프됨 — JS 계산 없이
+  캡처 PNG의 `roundRect()` 알약과 같은 트릭을 CSS로 구현
+- **위치**: 세로 중앙 정렬이 아니라 위에서 `top: 6vmin`으로 고정(아래쪽에 여백이 더 크게
+  남음 — 손 아이콘 자리). `#guide`(프레임 아래 아이콘)와 `#frameLogo`(프레임 안쪽 하단
+  워터마크)는 전부 `--frame-h` 기준 calc()로 위치를 잡으므로, `--frame-w`만 바꾸면 나머지는
+  자동으로 따라감
+- **"every else" 워터마크**: 기존 상단 로고 바(`#topBand`/`#topLogo`)는 제거되고,
+  프레임 안쪽 하단에 흰색 로고(`LOGO_SVG` + `filter:invert(1)`)로 대체됨. 캡처 결과물
+  PNG에도 `compositeCapture()`에서 같은 비율로 그려 넣음(`ctx.filter='invert(1)'`)
+- `hands.onResults`/`cam.onFrame`의 좌표 매핑은 원래도 `fxCanvas.width/height`를 동적으로
+  읽고 있어서, 캔버스가 영구히 프레임 크기가 된 것만으로 별도 수정 없이 자동으로 프레임
+  좌표계에 맞게 동작함
+- **비네트 버그**: 비네트(`fxCtx.createRadialGradient`)가 예전엔 상태와 무관하게 매 프레임
+  그려졌는데, `fx` 캔버스가 항상 전체화면이던 시절엔 무해했지만 프레임 크기로 줄어든 뒤엔
+  IDLE/QR_DISPLAY 화면 한가운데에 반투명 알약이 떠 있는 버그가 됨 → ARMING/DRAWING/
+  COUNTDOWN/CAPTURING 상태에서만 그리도록 조건 추가함
+
+## 3개 화면 크로스페이드 (2026-08-08)
+
+IDLE / 카메라뷰(ARMING·DRAWING·COUNTDOWN·CAPTURING) / QR_DISPLAY, 이 세 "큰 화면" 단위로만
+`opacity` 크로스페이드(`.scene{opacity:0; transition:opacity .5s ease-in-out} .scene.
+scene-visible{opacity:1}`)가 걸림 — `#sceneIdle`/`#sceneCamera`/`#sceneQr` 3개 wrapper div로
+관련 요소들을 묶고, `updateScreens()`에서 `setScene(currentScene(state))`로 토글. 각 씬
+안에서의 세부 상태 전환(예: ARMING→DRAWING)은 예전처럼 즉시 전환, 페이드 재트리거 안 됨.
+`#ring`/`#camError`/`#wv`는 이 3개 씬 밖에 있음(항상 존재, 자체 내용으로만 보이거나 안 보임).
+
+**⚠️ 겪은 버그 — 대기화면 영상이 재생되다가 멈춘 것처럼 보임**: `attractGuideAnimEl.play()`를
+스크립트 로드 시점에 딱 한 번만 낙관적으로 호출하고 "재생 중" 플래그를 바로 `true`로
+확정했었는데, 씬이 아직 `opacity:0`인 순간(크로스페이드 도입 전엔 없던 타이밍)에 `.play()`가
+불리면 크롬이 **"화면에 안 보이는 video-only 트랙은 절전을 위해 중단시킨다"**는 정책으로
+재생을 그냥 취소(`AbortError`)시켜버림 — 그런데 플래그는 이미 `true`라서 다시는 재생을
+시도 안 하고 영원히 멈춰있게 됨. 고침: `.play()`가 거부되면(`.catch`) 플래그를 다시 `false`로
+되돌려서, 같은 상태가 유지되는 동안 다음 프레임에 자동 재시도되게 함(`tryPlay()` 헬퍼).
 
 ## 손 제스처 판정 (한 손, MediaPipe Hands `maxNumHands:1`)
 
@@ -104,18 +159,43 @@ IDLE (대기 루프) → ARMING (포인팅 제스처 유지, 0.6초) → DRAWING
 **SelfieSegmentation이 빠지면서** 예전에 있었던 "640×480 마스크 캔버스(`sc`)용 크롭"은 자연히
 사라짐 — 이제 크롭이 필요한 캔버스는 `feedCanvas`/`fxCanvas` 하나뿐.
 
-## 캡처 → JPEG → Supabase 업로드 → QR (신규)
+## 캡처 → PNG(pill 모양, 흑백+컬러) → Supabase 업로드 → QR
 
-`compositeCapture()`가 `feedCanvas`(라이브 카메라) 위에 `fxCanvas`(트레일+비네트)를 합성한 뒤
-JPEG(품질 0.85)로 인코딩. `SUPABASE_URL`/`SUPABASE_ANON_KEY`/`SUPABASE_BUCKET`
-(`MEP_interactive_photos`)이 `index.html`에 하드코딩되어 있고, 업로드 성공 시 공개 URL을 QR로
-인코딩. **업로드 실패(또는 Supabase 미설정) 시에도 조용히 placeholder QR로 폴백**하므로 캡처
-자체가 막히진 않음.
+`compositeCapture()`가 만드는 최종 이미지 (2026-07-30 기준):
+1. 캔버스 전체를 자기 자신의 짧은 변 절반 반지름(`Math.min(W,H)/2`)으로 `ctx.roundRect()`
+   클리핑 — 모서리를 최대로 굴려서 완전한 알약(스타디움) 실루엣을 만들고, 바깥은 투명
+2. `feedCanvas`(라이브 카메라)는 `ctx.filter = 'grayscale(1)'`로 흑백으로 그림
+3. 필터를 끄고 그 위에 `fxCanvas`(트레일+비네트)를 원색 그대로 그림 — 그래서 사진은 흑백,
+   파티클 궤적만 컬러로 도드라져 보임
+4. `canvas.toBlob(..., 'image/png')`로 PNG 인코딩(예전엔 JPEG 0.85였음)
 
-**⚠️ 확인 필요**: 코드 주석엔 "TODO: fill these in once the Supabase project exists"라고
-남아있는데 그 바로 아래 실제 URL/키/버킷 값이 채워져 있음 — 이 프로젝트가 이미 실제로 설정된
-것인지, 주석만 갱신을 안 한 것인지, 실제 업로드가 되는지 확인 안 됨. 다음에 만지게 되면
-실제로 캡처→QR 스캔까지 눈으로 확인해볼 것.
+**⚠️ 실제 하드웨어에서 눈으로 확인 안 됨**: 흑백/컬러 분리 자체는 합성 코드 레벨(픽셀 샘플링)
+로는 검증했지만, 실제 카메라로 캡처했을 때 육안으로 봤을 때 사진이 확실히 흑백으로 보이는지는
+아직 확인 못함 — 다음에 만지면 실제 캡처해서 눈으로 볼 것.
+
+`SUPABASE_URL`/`SUPABASE_ANON_KEY`/`SUPABASE_BUCKET`(`MEP_interactive_photos`)이
+`index.html`에 하드코딩되어 있음. **✅ 2026-07-30 확인: 실제로 설정되어 있고 정상 동작함**
+(예전 노트의 "확인 필요" 해소) — anon key로 실제 업로드 → 공개 URL 접근까지 검증됨. 버킷의
+RLS 정책은 anon **INSERT만** 허용(UPDATE도 DELETE도 없음) — 업로드는 항상 새 파일명
+(`upsert:false`)으로만 할 것, 코드로 기존 오브젝트를 지우거나 덮어쓸 방법이 없음(테스트로 쌓인
+파일은 Supabase 대시보드에서 직접 지워야 함).
+
+업로드 성공 시 공개 URL을 QR로 인코딩. **업로드 실패 시 더 이상 조용히 넘어가지 않음** —
+`console.error`로 실제 에러를 남기고, QR 폴백 텍스트도 "Supabase가 아직 설정되지 않았습니다"
+(진짜 미설정, `supabaseClient`가 null인 경우)와 "업로드 실패: (실제 에러 메시지)"(설정은 됐는데
+이번 요청만 실패)를 구분해서 보여줌 — 키오스크 화면엔 개발자도구가 없으니 QR 자체가 곧
+진단 메시지가 되도록.
+
+**⚠️ 시도했다가 버린 것 — QR에 다운로드/공유 버튼 페이지 연결**: QR이 이미지 파일 URL을 직접
+가리켜서 스캔하면 사진만 뜨고 다운로드/공유 버튼이 없는 걸 고치려고, `share.html`(다운로드+공유
+버튼 있는 별도 페이지)을 Supabase Storage에 업로드하고 QR이 `share.html?img=이미지URL`을
+가리키게 시도했었음. **Supabase Storage는 보안상 `text/html`(그리고 svg, js 등)을 버킷 MIME
+허용 설정과 무관하게 항상 `text/plain`으로 강제 다운그레이드해서 서빙함** — 업로드 자체는
+성공해도 브라우저가 페이지로 렌더링하지 않고 소스코드를 그대로 텍스트로 보여줌. 버킷 설정으로
+끌 수 없는 플랫폼 정책이라 이 방식 자체가 Supabase Storage에서는 불가능 — **다시 시도하지
+말 것**. 이 기능을 살리려면 `share.html`을 Supabase가 아닌 다른 곳(예: 이 저장소가 실제
+배포되는 공개 주소)에서 서빙해야 함. 현재는 QR이 그냥 이미지 URL을 직접 가리키는 원래 방식으로
+복귀한 상태 — 다운로드/공유 버튼은 미구현.
 
 ## 현재 튜닝 값 (index.html 안에서 검색해서 찾을 것)
 
@@ -154,21 +234,44 @@ JPEG(품질 0.85)로 인코딩. `SUPABASE_URL`/`SUPABASE_ANON_KEY`/`SUPABASE_BUC
 3. **겹치는 파티클이 그릴 때마다 깜빡임**: 그리기 순서를 생성 순서(최신이 항상 위)로 하면
    자연스럽지만, 매 프레임 순서가 바뀌면 깜빡거림 → 파티클마다 고정 랜덤 `tlayer`를 한 번만
    부여하고 그걸로 정렬 (프레임 간 안정적, "겹칠 때 순서가 고정 무작위"가 됨)
-4. **Lottie 손 제스처 애니메이션이 안 보임** (예전 세션에서 발견, 이번에도 그대로 유지):
-   내보낸 JSON의 정적(`"a":0`) shape-path가 `"k"`를 배열로 감싼 비정형 포맷이라 lottie-web이
-   파싱 못 함 → `fixStaticShapePaths()`로 언랩. `autoplay:false`일 때 SVG 렌더러가 프레임 0도
-   안 그리는 것도 `goToAndStop(0, true)`로 강제 트리거.
+4. **Lottie 관련 문제들**: 2026-07-30에 Lottie를 webm 클립으로 완전히 교체하면서 이제 무관해짐
+   — 궁금하면 git log에서 `bb4352d` 이전 커밋들과 그 시점의 이 파일 내용을 참고할 것.
+5. **QR 캔버스가 프레임을 넘어서 튀어나옴**: `qrcode` 라이브러리가 렌더링 후 캔버스에 인라인
+   `style="width:...px;height:...px"`를 직접 써버려서, CSS 선택자가 아무리 구체적이어도
+   인라인 스타일을 못 이김 → `#qrCodeBox canvas`에 `!important`로 강제 override. 렌더 해상도도
+   300→800으로 올려서, 큰(4K) 화면에서 CSS가 다운스케일할 때 흐려지지 않게 함
+6. **QR_DISPLAY 복귀 제스처가 캡처 직후 바로 오발동**: `state='QR_DISPLAY'`로 전환하는 순간,
+   캡처를 트리거했던 바로 그 주먹이 아직 쥐어진 채라 "최근에 편 손이었음" 조건이 이미 만족된
+   상태로 남아있어서 즉시 복귀 제스처로 오인식됨 → `startCapture()`에서 `state='QR_DISPLAY'`로
+   바뀌는 순간 `openSeenAt = -Infinity`로 무효화, 반드시 QR 화면 진입 *이후* 새로 손을 펴야만
+   복귀로 인정되게 함
+7. **Supabase Storage에 `text/html` 못 올림**: 위 "캡처 → PNG..." 섹션의 "시도했다가 버린 것"
+   참고
+8. **로컬 서버가 `.webm`을 잘못된 Content-Type으로 서빙**: `serve.js`(이 저장소의 커스텀 정적
+   서버 — `.claude/launch.json`엔 `npx serve`로 되어있지만 실제로는 이 스크립트가 도는 걸
+   프로세스 확인으로 검증함, 이유는 불명)의 MIME 매핑에 `.webm`이 빠져 있어서
+   `application/octet-stream`으로 내려가고 있었음 — 이러면 브라우저에 따라 `<video>`가 재생
+   자체를 거부함. `serve.js`의 `mime` 객체에 `.webm: 'video/webm'` 추가로 해결. **이 파일은
+   원래 git에 안 올라가 있었어서(untracked) 기기마다 따로 존재할 수 있었음** — 2026-08-08부터
+   커밋됨, 그래도 다른 기기에서 이 문제가 재발하면 같은 파일의 로컬 사본이 이 커밋 이전 버전인지
+   확인할 것
 
 ## 알려진 한계 / 미완성 부분
 
-- **⚠️ IDLE 안내 그래픽이 예전 제스처를 보여줌**: Lottie 애니메이션 + `guide`의 손 아이콘 둘 다
-  "두 손으로 프레임 만들기" 시절 그래픽 그대로임. 코드 주석에 다른 세션에서 직접 교체 예정이라고
-  적혀 있음 — 확인 없이 임의로 바꾸지 말 것
-- **Supabase 설정 여부 불확실**: 위 "캡처 → JPEG → Supabase 업로드 → QR" 참고
 - **실제 카메라/키오스크 미검증**: 손 제스처 인식 안정성(특히 포인팅/주먹/스와이프 삼중 판정이
   실제 조명/카메라에서 서로 오인식 없이 잘 구분되는지), 9:16 실물 TV 룩앤필 모두 미확인
-- **업로드된 사진 정리 정책 없음**: `lastThumbURL`(브라우저 blob URL)은 매 캡처마다 이전 걸
-  `revokeObjectURL`로 정리하지만, Supabase 버킷에 업로드된 파일 자체는 계속 쌓임
+- **캡처 사진의 흑백/컬러 분리가 실제 하드웨어에서 육안 확인 안 됨**: 위 "캡처 → PNG..." 섹션
+  참고
+- **QR 다운로드/공유 버튼 미구현**: Supabase Storage가 `text/html`을 못 서빙해서 포기 — 위
+  "시도했다가 버린 것" 참고. 현재 QR은 그냥 업로드된 이미지 URL을 직접 가리킴
+- **업로드된 파일 정리 정책 없음, 코드로 지울 수도 없음**: `lastThumbURL`(브라우저 blob URL)은
+  매 캡처마다 이전 걸 `revokeObjectURL`로 정리하지만, Supabase 버킷에 업로드된 파일 자체는
+  계속 쌓이고 anon key엔 DELETE 권한도 없음(위 참고) — 대시보드에서 수동 정리해야 함. 이번
+  세션 개발 중 테스트/probe 파일 몇 개가 실제 버킷에 남아있음
+- **900:1350 프레임/씬 크로스페이드 실제 하드웨어 미검증**: `--frame-w`(63vmin) 크기나 각종
+  간격(6vmin, 4vmin 등)은 목업 눈대중 + 이 대화에서 나온 배수 조정으로 잡은 값이라, 실물
+  세로 TV에서 보고 추가로 조정이 필요할 수 있음. 씬 페이드(0.5s ease-in-out)도 실제 타이밍
+  느낌은 안 봄
 
 ## Git
 
