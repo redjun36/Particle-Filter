@@ -904,7 +904,7 @@ const wv = document.getElementById('wv');
 // Center-cropping the raw frame to 1/CAMERA_ZOOM of its width/height before
 // doing anything else (both the display crop AND what's sent to MediaPipe)
 // digitally narrows the effective FOV, same idea as an optical zoom.
-const CAMERA_ZOOM = 2;
+const CAMERA_ZOOM = 1;
 const zoomCanvas = document.createElement('canvas');
 const zoomCtx    = zoomCanvas.getContext('2d');
 
