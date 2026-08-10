@@ -898,22 +898,48 @@ hands.onResults(res => {
 
 // ─── Camera ───────────────────────────────────────────────────────────────────
 const wv = document.getElementById('wv');
+// Digital zoom — some webcams (esp. wide-FOV 4K conferencing cams) frame a
+// hand too small in the raw sensor image for MediaPipe to track reliably,
+// even though the same physical gesture works fine on a narrower-FOV webcam.
+// Center-cropping the raw frame to 1/CAMERA_ZOOM of its width/height before
+// doing anything else (both the display crop AND what's sent to MediaPipe)
+// digitally narrows the effective FOV, same idea as an optical zoom.
+const CAMERA_ZOOM = 2;
+const zoomCanvas = document.createElement('canvas');
+const zoomCtx    = zoomCanvas.getContext('2d');
+
 const cam = new Camera(wv, {
   onFrame: async () => {
     const W = feedCanvas.width, H = feedCanvas.height;
-    const srcW = wv.videoWidth, srcH = wv.videoHeight;
-    if (srcW && srcH) {
-      const crop = coverRect(srcW, srcH, W, H);
+    const rawW = wv.videoWidth, rawH = wv.videoHeight;
+    if (rawW && rawH) {
+      const zw = rawW / CAMERA_ZOOM, zh = rawH / CAMERA_ZOOM;
+      const zx = (rawW - zw) / 2, zy = (rawH - zh) / 2;
+      zoomCanvas.width = zw; zoomCanvas.height = zh;
+      zoomCtx.drawImage(wv, zx, zy, zw, zh, 0, 0, zw, zh);
+
+      const crop = coverRect(zw, zh, W, H);
       feedCtx.save();
       feedCtx.translate(W, 0); feedCtx.scale(-1, 1);
-      feedCtx.drawImage(wv, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, W, H);
+      feedCtx.drawImage(zoomCanvas, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, W, H);
       feedCtx.restore();
+
+      // MediaPipe sees the same zoomed-in view the display does, so the
+      // hand reads bigger to the model and hands.onResults' own coverRect
+      // remap (using res.image's width/height, already zoomCanvas-sized —
+      // canvases have no videoWidth/videoHeight, so that fallback already
+      // does the right thing with no changes needed there) stays in sync
+      // with what's actually drawn on feedCanvas.
+      await hands.send({ image: zoomCanvas });
     }
-    await hands.send({ image: wv });
   },
   width: 1280, height: 720
 });
-cam.start().catch(() => { camErrorEl.style.display = 'block'; });
+cam.start().catch(err => {
+  console.error('Camera failed to start:', err.name, err.message, err);
+  camErrorEl.textContent = `카메라 접근 실패 (${err.name || 'Unknown'}) — ${err.message || '원인 불명'}`;
+  camErrorEl.style.display = 'block';
+});
 
 // ─── Exhibition screens ────────────────────────────────────────────────────────
 // feed canvas is only meaningful once the person is actually being guided into
